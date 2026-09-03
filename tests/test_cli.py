@@ -75,6 +75,13 @@ def test_max_rounds_floor(tmp_path):
         )
 
 
+def test_context_budget_floor(tmp_path):
+    with pytest.raises(ValueError, match="--context-budget"):
+        validate_and_infer_topology(
+            parse(tmp_path, "--models", "a", "b", "--context-budget", "500")
+        )
+
+
 def test_non_interactive_flag(tmp_path):
     assert parse(tmp_path, "--models", "a", "b").non_interactive is False
     assert parse(tmp_path, "--models", "a", "b", "--non-interactive").non_interactive is True
