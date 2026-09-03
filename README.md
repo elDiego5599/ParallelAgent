@@ -50,7 +50,8 @@ El orquestador no opina sobre el código. Solo reparte turnos, mantiene la trans
 ## Componentes previstos
 
 - `cli.py`: punto de entrada. Infiere la topología (`--models` para `peer`, `--lead` con `--advisors` para `lead`) y parámetros de tarea, ruta, límites y modo.
-- `orchestrator.py`: motores de debate (`PeerEngine` implementado, `LeadEngine` previsto). Gestión de transcripción compartida y detección de quórum.
+- `orchestrator.py`: `PeerEngine`, estados, HITL y salida a Git compartida (`finish_build_output`).
+- `lead_engine.py`: `LeadEngine` (líder propone y redacta, asesores auditan con `CONFORME` / `OBJECION_BLOQUEANTE` / `VETO_ARQUITECTONICO`).
 - `providers.py`: adaptadores para proveedores con tier gratuito (Pollinations, OpenRouter, Groq). Cada adaptador expone la misma interfaz de chat.
 - `context.py`: construcción del mapa de contexto del repositorio. Recorte por relevancia para no saturar la ventana de contexto.
 - `git_bridge.py`: creación de rama, aplicación del diff y reporte de cambios para revisión manual. Solo se usa en modo `build`.
@@ -128,4 +129,4 @@ El marcador de estado se extrae por expresión regular al final del mensaje. Si 
 
 ## Estado actual
 
-`PeerEngine` implementado con contexto de repositorio, interrupción al usuario y salida a Git en modo `build`. `LeadEngine`, en desarrollo.
+`PeerEngine` y `LeadEngine` implementados con contexto de repositorio, interrupción al usuario y salida a Git en modo `build`. Verificados con proveedores simulados.
