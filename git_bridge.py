@@ -122,6 +122,11 @@ def apply_consensus_to_branch(
                 pass
         raise
 
+    try:
+        _run_git(path, "checkout", original)
+    except GitBridgeError as e:
+        print(f"[AVISO] No se pudo volver a '{original}': {e}. Quedaste en '{branch}'.")
+
     return {
         "original_branch": original,
         "branch": branch,

@@ -30,8 +30,14 @@ def test_heals_on_second_try(tmp_path):
     )
     assert rc == 0 and len(seen) == 1
     assert "falló" in seen[0] and "ctx" in seen[0]
-    assert (tmp_path / "f.txt").read_text() == "hola\nlinea nueva\n"
-    assert "consensus/" in consensus_branches(tmp_path)
+    out = consensus_branches(tmp_path)
+    assert "consensus/" in out
+    branch = [l.strip().lstrip("* ") for l in out.splitlines() if "consensus/" in l][0]
+    shown = subprocess.run(
+        ["git", "show", f"{branch}:f.txt"],
+        cwd=tmp_path, capture_output=True, text=True, check=True,
+    ).stdout
+    assert shown == "hola\nlinea nueva\n"
 
 
 def test_gives_up_after_failed_repair(tmp_path):

@@ -38,13 +38,22 @@ DIFF = """--- a/f.txt
 """
 
 
+def show_file(path, branch, name="f.txt"):
+    r = subprocess.run(
+        ["git", "show", f"{branch}:{name}"],
+        cwd=path, capture_output=True, text=True, check=True,
+    )
+    return r.stdout
+
+
 def test_happy_path_creates_branch_and_applies(tmp_path):
     init_repo(tmp_path)
     base = current_branch(tmp_path)
     info = apply_consensus_to_branch(tmp_path, "Agrega línea", DIFF)
     assert info["original_branch"] == base
     assert re.fullmatch(r"consensus/\d{8}-\d{6}-[\w-]+", info["branch"])
-    assert (tmp_path / "f.txt").read_text() == "hola\nlinea nueva\n"
+    assert show_file(tmp_path, info["branch"]) == "hola\nlinea nueva\n"
+    assert current_branch(tmp_path) == base
     assert info["inspect"] == f"git diff {base}...{info['branch']}"
     assert info["dirty_before"] is False
 
@@ -99,5 +108,5 @@ def test_recount_saves_miscounted_hunk(tmp_path):
 +linea nueva
 """
     info = apply_consensus_to_branch(tmp_path, "t", bad_counts)
-    assert (tmp_path / "f.txt").read_text() == "hola\nlinea nueva\n"
+    assert show_file(tmp_path, info["branch"]) == "hola\nlinea nueva\n"
     assert info["branch"].startswith("consensus/")
