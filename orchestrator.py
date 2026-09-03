@@ -7,15 +7,25 @@ compartida y aplica la regla de parada por quórum.
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
+from context import build_repo_context
+from git_bridge import GitBridgeError, apply_consensus_to_branch
 from providers import BaseProvider, ProviderError, resolve_provider
+
+
+HUMAN = "HUMANO / TECH LEAD"
+SYSTEM = "SISTEMA"
 
 
 CONSENSUS = "CONSENSO_ALCANZADO"
 DEBATING = "DEBATIENDO"
+QUESTION = "PREGUNTA_AL_USUARIO"
 
-_ESTADO_RE = re.compile(r"ESTADO:\s*(DEBATIENDO|CONSENSO_ALCANZADO)", re.IGNORECASE)
+_ESTADO_RE = re.compile(
+    r"ESTADO:\s*(DEBATIENDO|CONSENSO_ALCANZADO|PREGUNTA_AL_USUARIO)",
+    re.IGNORECASE,
+)
 
 
 def parse_estado(text: str) -> str:
@@ -23,7 +33,7 @@ def parse_estado(text: str) -> str:
     matches = _ESTADO_RE.findall(text or "")
     if not matches:
         return DEBATING
-    return CONSENSUS if matches[-1].upper() == CONSENSUS else DEBATING
+    return matches[-1].upper()
 
 
 @dataclass
@@ -57,8 +67,10 @@ def build_system_prompt(model_id: str, peers: List[str], task: str, mode: str) -
         "2. Cuestiona con rigor técnico: condiciones de carrera, fugas, APIs deprecadas.\n"
         "3. No seas complaciente: si una propuesta falla, señálalo con código mínimo.\n"
         "4. En deliberación no reescribas archivos completos, solo diseño y riesgos.\n"
-        "5. Cierra cada mensaje con una línea exacta: ESTADO: DEBATIENDO o ESTADO: CONSENSO_ALCANZADO.\n"
-        "Usa CONSENSO_ALCANZADO solo si estás de acuerdo con la propuesta vigente de la mesa."
+        "5. Cierra cada mensaje con una línea exacta: ESTADO: DEBATIENDO, ESTADO: CONSENSO_ALCANZADO o ESTADO: PREGUNTA_AL_USUARIO.\n"
+        "Usa CONSENSO_ALCANZADO solo si estás de acuerdo con la propuesta vigente de la mesa.\n"
+        "6. Usa PREGUNTA_AL_USUARIO solo ante un bloqueo arquitectónico o de negocio imposible de deducir del código. "
+        "Formula la duda como PREGUNTA: ... Prohibido preguntar por estilo, nombres o convenciones."
     )
 
 
@@ -80,7 +92,8 @@ def build_turn_prompt(
         lines.append("Eres el primero en hablar. Presenta tu pitch inicial.")
     lines.append(
         "Intervén de forma breve. Responde a lo dicho por la mesa y "
-        "cierra con ESTADO: DEBATIENDO o ESTADO: CONSENSO_ALCANZADO."
+        "cierra con ESTADO: DEBATIENDO, ESTADO: CONSENSO_ALCANZADO o, "
+        "solo ante un bloqueo real, ESTADO: PREGUNTA_AL_USUARIO."
     )
     return "\n\n".join(lines)
 
@@ -116,6 +129,61 @@ def _quorum_met(estados: List[str], quorum: str) -> bool:
     return n > 0 and agreed == n
 
 
+def _extract_question(text: str) -> str:
+    """Limpia el marcador de estado y devuelve la duda formulada."""
+    clean = _ESTADO_RE.sub("", text or "").strip()
+    return clean[-1200:] if len(clean) > 1200 else clean
+
+
+def default_ask_user(model: str, question: str) -> str:
+    print("=" * 65)
+    print("[ParallelAgent] LA MESA SOLICITA ACLARACIÓN TÉCNICA")
+    print("=" * 65)
+    print(f"Modelo: {model}")
+    print(f"Duda:   {question}")
+    try:
+        return input("\nTu respuesta > ").strip()
+    except EOFError:
+        return ""
+
+
+def _resolve_question(
+    result: DebateResult,
+    round_num: int,
+    model: str,
+    text: str,
+    interactive: bool,
+    ask_user: Optional[Callable[[str, str], str]],
+    questions_asked: int,
+    max_questions: int,
+    verbose: bool,
+) -> None:
+    """Pausa la sala, consigue la aclaración y la inyecta al transcript."""
+    if questions_asked >= max_questions:
+        note = "Límite de preguntas alcanzado. Continúen con la alternativa más conservadora."
+        source = SYSTEM
+    elif interactive:
+        handler = ask_user or default_ask_user
+        answer = handler(model, _extract_question(text))
+        if not answer.strip():
+            note = "Sin respuesta. Asuman la alternativa más conservadora y continúen."
+            source = SYSTEM
+        else:
+            note = answer
+            source = HUMAN
+    else:
+        note = (
+            "El usuario no está disponible (modo no interactivo). "
+            "Asuman la alternativa más conservadora y continúen."
+        )
+        source = SYSTEM
+    result.transcript.append(
+        Turn(round=round_num, model=source, text=note, estado=DEBATING)
+    )
+    if verbose:
+        print(f"\n[{source} -> mesa]\n{note}\n")
+
+
 def run_debate(
     providers: List[BaseProvider],
     task: str,
@@ -125,6 +193,9 @@ def run_debate(
     quorum: str = "unanime",
     writer: Optional[str] = None,
     verbose: bool = True,
+    interactive: bool = True,
+    ask_user: Optional[Callable[[str, str], str]] = None,
+    max_questions: int = 3,
 ) -> DebateResult:
     if len(providers) < 2:
         raise ValueError("Se requieren al menos 2 modelos en la mesa.")
@@ -138,6 +209,7 @@ def run_debate(
 
     result = DebateResult(task=task, mode=mode)
     last_speaker = ids[-1]
+    questions_asked = 0
 
     for round_num in range(1, max_rounds + 1):
         round_estados: List[str] = []
@@ -161,10 +233,19 @@ def run_debate(
             result.transcript.append(
                 Turn(round=round_num, model=provider.model_id, text=text, estado=estado)
             )
+            if estado == QUESTION:
+                if verbose:
+                    print(f"\n[{provider.model_id} | ronda {round_num} | {estado}]\n{text}\n")
+                _resolve_question(
+                    result, round_num, provider.model_id, text,
+                    interactive, ask_user, questions_asked, max_questions, verbose,
+                )
+                questions_asked += 1
+                estado = DEBATING
+            elif verbose:
+                print(f"\n[{provider.model_id} | ronda {round_num} | {estado}]\n{text}\n")
             round_estados.append(estado)
             last_speaker = provider.model_id
-            if verbose:
-                print(f"\n[{provider.model_id} | ronda {round_num} | {estado}]\n{text}\n")
 
         result.rounds_used = round_num
         if _quorum_met(round_estados, quorum):
@@ -208,6 +289,7 @@ class PeerEngine:
         max_rounds: int = 4,
         quorum: str = "unanime",
         context: str = "",
+        interactive: bool = True,
     ):
         self.task = task
         self.project_path = project_path
@@ -217,6 +299,7 @@ class PeerEngine:
         self.max_rounds = max_rounds
         self.quorum = quorum
         self.context = context
+        self.interactive = interactive
 
     def run(self) -> int:
         try:
@@ -224,15 +307,18 @@ class PeerEngine:
         except ProviderError as e:
             print(f"[ERROR] {e}")
             return 1
+        context = self.context or build_repo_context(self.project_path, self.task)
+        print(f"Contexto: {len(context)} caracteres del repositorio.")
         result = run_debate(
             providers,
             task=self.task,
-            context=self.context,
+            context=context,
             mode=self.mode,
             max_rounds=self.max_rounds,
             quorum=self.quorum,
             writer=self.writer,
             verbose=True,
+            interactive=self.interactive,
         )
         print("=" * 65)
         print(
@@ -240,6 +326,22 @@ class PeerEngine:
             f"Rondas: {result.rounds_used} | Redactor: {result.writer}"
         )
         print("=" * 65)
+        if self.mode == "build":
+            if not result.final_output:
+                return 1
+            try:
+                info = apply_consensus_to_branch(
+                    self.project_path, self.task, result.final_output
+                )
+            except GitBridgeError as e:
+                print(f"[ERROR GIT] {e}\nDiff emitido (no aplicado):")
+                print(result.final_output)
+                return 1
+            print(f"Rama: {info['branch']}")
+            print(f"Revisa con: {info['inspect']}")
+            if info["dirty_before"]:
+                print("[AVISO] El árbol tenía cambios sin commitear antes de empezar.")
+            return 0
         print(result.final_output)
         return 0 if result.final_output else 1
 

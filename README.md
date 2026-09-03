@@ -20,7 +20,10 @@ Estados en `peer`:
 ```
 ESTADO: DEBATIENDO
 ESTADO: CONSENSO_ALCANZADO
+ESTADO: PREGUNTA_AL_USUARIO
 ```
+
+Ante `PREGUNTA_AL_USUARIO` el orquestador pausa la sala, pide la aclaración por terminal y la inyecta al transcript como mensaje prioritario. Solo se autoriza ante bloqueos arquitectónicos o de negocio; prohibido preguntar por estilo o convenciones. Con `--non-interactive` no se pregunta: se asume la vía conservadora y continúa. Límite de 3 preguntas por sesión.
 
 Estados en `lead` (líder propone y redacta, asesores auditan sin escribir código):
 
@@ -84,9 +87,10 @@ Parámetros:
 - `--lead`: identificador del modelo líder. Requiere `--advisors`.
 - `--advisors`: lista de identificadores de modelos asesores. Mínimo 1.
 - `--writer` (solo `peer`): identificador del modelo que transcribe el resultado final. Debe pertenecer a `--models`. Opcional. Por defecto, el último en hablar.
-- `--mode`: `build`, `plan` o `ask`. Por defecto `build`.
+- `--mode`: `build`, `plan` o `ask`. Por defecto `build`. En `build`, el diff emitido se aplica vía `git_bridge.py` sobre la rama efímera.
 - `--max-rounds`: límite de rondas de deliberación antes de forzar votación final. Por defecto 4.
 - `--quorum` (solo `peer`): `unanime` o `mayoria`. Por defecto `unanime`.
+- `--non-interactive`: no pedir aclaraciones por terminal (CI/CD). Por defecto se pregunta.
 
 Comités de ejemplo:
 
@@ -124,4 +128,4 @@ El marcador de estado se extrae por expresión regular al final del mensaje. Si 
 
 ## Estado actual
 
-`PeerEngine` implementado sobre `providers.py` y verificado con `MockProvider`. `LeadEngine`, `context.py`, `cli.py` y `git_bridge.py` pendientes.
+`PeerEngine` implementado con contexto de repositorio, interrupción al usuario y salida a Git en modo `build`. `LeadEngine`, en desarrollo.
