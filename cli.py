@@ -94,6 +94,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="unanime",
         help="Criterio de parada para topología peer (por defecto: unanime).",
     )
+    common_group.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="No preguntar por terminal. Ante PREGUNTA_AL_USUARIO se asume "
+        "la vía conservadora (útil en CI/CD).",
+    )
+
 
     return parser
 
@@ -180,6 +187,7 @@ def print_banner(topology: str, args: argparse.Namespace) -> None:
     print(f"Tarea:       {args.task}")
     print(f"Proyecto:    {args.path.resolve()}")
     print(f"Rondas max:  {args.max_rounds}")
+    print(f"Interactivo: {'no (--non-interactive)' if args.non_interactive else 'sí'}")
 
     if topology == "peer":
         writer_label = (
@@ -222,6 +230,7 @@ def main() -> int:
             mode=args.mode,
             max_rounds=args.max_rounds,
             quorum=args.quorum,
+            interactive=not args.non_interactive,
         )
         return engine.run()
 
