@@ -1,3 +1,12 @@
+# Entorno local
+.env
+
+# Bytecode
 __pycache__/
 *.pyc
-.env
+
+# Packaging artifacts
+*.egg-info/
+build/
+dist/
+.pytest_cache/
