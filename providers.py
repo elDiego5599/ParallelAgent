@@ -80,51 +80,6 @@ class MockProvider(BaseProvider):
         )
 
 
-class PollinationsProvider(BaseProvider):
-    """Proveedor gratuito y sin API key vía Pollinations.ai.
-
-    Maneja defensivamente respuestas tanto en texto plano como en JSON.
-    """
-
-    URL = "https://text.pollinations.ai/"
-
-    def chat(self, messages: List[Dict[str, str]]) -> str:
-        payload = {
-            "messages": messages,
-            "model": self.model_id,
-            "seed": 42,
-            "jsonMode": False,
-        }
-        try:
-            response = requests.post(self.URL, json=payload, timeout=60)
-            response.raise_for_status()
-
-            # Pollinations suele devolver texto plano, pero si devuelven JSON defensivamente:
-            content_type = response.headers.get("content-type", "").lower()
-            if "application/json" in content_type:
-                data = response.json()
-                if (
-                    isinstance(data, dict)
-                    and "choices" in data
-                    and data["choices"]
-                ):
-                    return data["choices"][0]["message"]["content"].strip()
-                if isinstance(data, dict) and "text" in data:
-                    return str(data["text"]).strip()
-
-            text = response.text.strip()
-            if not text:
-                raise ProviderError(
-                    f"Pollinations ({self.model_id}) devolvió una respuesta vacía."
-                )
-            return text
-
-        except (requests.RequestException, ValueError, KeyError, IndexError) as e:
-            raise ProviderError(
-                f"Error en llamada a Pollinations ({self.model_id}): {e}"
-            )
-
-
 class OpenAICompatibleProvider(BaseProvider):
     """Clase base reutilizable para proveedores que siguen la spec de OpenAI."""
 
@@ -172,6 +127,11 @@ class OpenAICompatibleProvider(BaseProvider):
 
             return content.strip()
 
+        except requests.HTTPError as e:
+            detail = getattr(getattr(e, "response", None), "text", "") or ""
+            raise ProviderError(
+                f"Fallo en API compatible ({self.model_id}): {e} {detail[:300]}".strip()
+            )
         except (requests.RequestException, ValueError, KeyError, IndexError) as e:
             raise ProviderError(
                 f"Fallo en API compatible ({self.model_id}): {e}"
@@ -202,6 +162,24 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         headers["HTTP-Referer"] = "https://github.com/ParallelAgent"
         headers["X-Title"] = "ParallelAgent"
         return headers
+
+
+class PollinationsProvider(OpenAICompatibleProvider):
+    """Proveedor Pollinations vía gateway unificado (requiere clave gratuita).
+
+    Clave gratuita en https://enter.pollinations.ai/keys -> POLLINATIONS_API_KEY.
+    """
+
+    URL = "https://gen.pollinations.ai/v1/chat/completions"
+
+    def __init__(self, model_id: str, api_key: str | None = None):
+        key = api_key or os.getenv("POLLINATIONS_API_KEY")
+        if not key:
+            raise ProviderError(
+                "Falta POLLINATIONS_API_KEY. Consigue una gratuita en "
+                "https://enter.pollinations.ai/keys"
+            )
+        super().__init__(model_id=model_id, api_key=key)
 
 
 def resolve_provider(model_identifier: str) -> BaseProvider:
