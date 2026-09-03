@@ -7,6 +7,7 @@ import pytest
 
 from git_bridge import (
     GitBridgeError,
+    _extract_diff,
     apply_consensus_to_branch,
     build_branch_name,
     current_branch,
@@ -79,3 +80,24 @@ def test_dirty_is_reported_not_blocked(tmp_path):
 def test_slug_and_branch_name():
     assert slugify_task("Agrega logs y try/catch!!!") == "agrega-logs-y-trycatch"
     assert build_branch_name("t").startswith("consensus/")
+
+
+def test_extract_diff_strips_fences():
+    assert _extract_diff("```diff\n--- a/f\n+++ b/f\n```") == "--- a/f\n+++ b/f\n"
+    assert _extract_diff("texto\n```\nDIFF\n```\ncola") == "DIFF\n"
+    assert _extract_diff("  DIFF crudo  ") == "DIFF crudo\n"
+    assert _extract_diff("```\n```") == ""
+    assert _extract_diff("   ") == ""
+
+
+def test_recount_saves_miscounted_hunk(tmp_path):
+    init_repo(tmp_path)
+    bad_counts = """--- a/f.txt
++++ b/f.txt
+@@ -1,9 +1,9 @@
+ hola
++linea nueva
+"""
+    info = apply_consensus_to_branch(tmp_path, "t", bad_counts)
+    assert (tmp_path / "f.txt").read_text() == "hola\nlinea nueva\n"
+    assert info["branch"].startswith("consensus/")

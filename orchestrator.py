@@ -113,7 +113,7 @@ def build_turn_prompt(
     return "\n\n".join(lines)
 
 
-def build_emission_prompt(task: str, transcript: List[Turn], mode: str) -> str:
+def build_emission_prompt(task: str, transcript: List[Turn], mode: str, context: str = "") -> str:
     body = "\n\n".join(f"[{t.model}]:\n{t.text}" for t in transcript)
     if mode == "plan":
         instruction = (
@@ -128,12 +128,14 @@ def build_emission_prompt(task: str, transcript: List[Turn], mode: str) -> str:
         )
     else:
         instruction = (
-            "Transcribe el acuerdo de la mesa como parche en formato diff unificado, "
-            "listo para aplicar. Sin explicaciones adicionales fuera del diff."
+            "Transcribe el acuerdo de la mesa como parche en formato diff unificado "
+            "contra el contenido original de abajo, con líneas de contexto y "
+            "cabeceras de hunk correctas. Solo el diff crudo, sin cercas Markdown."
         )
-    return (
-        f"Tarea: {task}\n\nAcuerdo de la mesa:\n{body}\n\n{instruction}"
-    )
+    prompt = f"Tarea: {task}\n\nAcuerdo de la mesa:\n{body}\n\n{instruction}"
+    if mode == "build" and context:
+        prompt += f"\n\nContenido original de referencia:\n{context}"
+    return prompt
 
 
 def _quorum_met(estados: List[str], quorum: str) -> bool:
@@ -279,7 +281,7 @@ def run_debate(
         },
         {
             "role": "user",
-            "content": build_emission_prompt(task, result.transcript, mode),
+            "content": build_emission_prompt(task, result.transcript, mode, context),
         },
     ]
     try:

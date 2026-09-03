@@ -214,7 +214,7 @@ def run_lead_debate(
         {"role": "system", "content": (
             f"Eres {lead.model_id}. Redactas el resultado final como líder, "
             f"respetando lo acordado. Modo: {mode}.")},
-        {"role": "user", "content": build_emission_prompt(task, result.transcript, mode)},
+        {"role": "user", "content": build_emission_prompt(task, result.transcript, mode, context)},
     ]
     try:
         result.final_output = lead.chat(emission)
