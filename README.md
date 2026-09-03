@@ -144,6 +144,7 @@ Ante 429 (límite de tokens por minuto) el proveedor reintenta hasta 2 veces res
 ## Control de contexto y costo
 
 - En deliberación solo se envían fragmentos relevantes del repositorio, no archivos completos.
+- Ventana deslizante: cada turno incluye el contexto, la ronda 1 y desde la ronda anterior; la charla intermedia se omite para acotar el payload.
 - El historial se trunca por rondas antiguas cuando supera el límite configurado; se conserva siempre el pitch inicial y la última ronda completa.
 - La emisión de código se hace una sola vez, por un solo modelo, para evitar duplicar tokens.
 
