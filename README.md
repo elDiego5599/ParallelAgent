@@ -1,0 +1,127 @@
+# ParalelAgent
+
+Sistema local de deliberación multi-modelo para tareas de programación. Varios modelos de lenguaje discuten una misma tarea sobre un repositorio real hasta alcanzar una solución común, que se entrega en una rama de Git separada para revisión.
+
+No es un pipeline por etapas. Es una mesa de trabajo compartida: los modelos conocen a los demás participantes, leen el historial completo de la discusión y se corrigen entre sí antes de emitir código.
+
+El framework soporta dos topologías complementarias. En `peer` los modelos deliberan en igualdad de condiciones, sin jerarquías. En `lead` un modelo lidera y redacta, y el resto audita. En ambos casos el único moderador es el orquestador, que reparte turnos, mantiene la transcripción y aplica la regla de parada. No valida contenido técnico.
+
+La herramienta no impone salvaguardas sobre la configuración. El usuario es responsable de los modelos que elige, de las API keys que usa y de los costos asociados.
+
+## Arquitectura
+
+El funcionamiento se divide en dos fases: deliberación y emisión. La topología se infiere del CLI: `--models` activa `peer`, `--lead` con `--advisors` activa `lead`.
+
+**1. Deliberación.**
+Los modelos reciben la tarea y el contexto del repositorio. Cada intervención se agrega a una transcripción compartida que todos leen en el turno siguiente. En esta fase está prohibido reescribir archivos completos; solo se discute diseño, APIs, casos borde y riesgos (condiciones de carrera, gestión de memoria, interoperabilidad JNI / MethodChannel, tipado entre capas).
+
+Estados en `peer`:
+
+```
+ESTADO: DEBATIENDO
+ESTADO: CONSENSO_ALCANZADO
+```
+
+Estados en `lead` (líder propone y redacta, asesores auditan sin escribir código):
+
+```
+ESTADO: CONFORME
+ESTADO: DEBATIENDO
+ESTADO: OBJECION_BLOQUEANTE
+ESTADO: VETO_ARQUITECTONICO
+```
+
+`OBJECION_BLOQUEANTE` devuelve el turno prioritario al líder para responder o corregir. `VETO_ARQUITECTONICO` unánime de los asesores obliga al líder a replantear la propuesta desde cero.
+
+**2. Emisión.**
+Cuando se detecta quórum o se agota `--max-rounds`, se cierra el debate. En `peer`, el modelo indicado con `--writer` transcribe el resultado acordado; si no se define, redacta el último en hablar. En `lead`, redacta siempre el líder. En modo `build`, el resultado es un parche en formato diff unificado que se aplica sobre una rama nueva del tipo `consensus/<fecha>-<tarea-corta>`. Nunca se escribe directo sobre `main`.
+
+El orquestador no opina sobre el código. Solo reparte turnos, mantiene la transcripción y aplica la regla de parada.
+
+## Modos de ejecución
+
+- `build` (por defecto): deliberación y emisión del diff directamente en una rama de Git.
+- `plan`: deliberación y devolución de un plan técnico en Markdown. No modifica código ni crea ramas.
+- `ask`: consulta técnica o auditoría. Los modelos debaten entre sí y devuelven la respuesta. No emite parches.
+
+## Componentes previstos
+
+- `cli.py`: punto de entrada. Infiere la topología (`--models` para `peer`, `--lead` con `--advisors` para `lead`) y parámetros de tarea, ruta, límites y modo.
+- `orchestrator.py`: motores de debate (`PeerEngine` implementado, `LeadEngine` previsto). Gestión de transcripción compartida y detección de quórum.
+- `providers.py`: adaptadores para proveedores con tier gratuito (Pollinations, OpenRouter, Groq). Cada adaptador expone la misma interfaz de chat.
+- `context.py`: construcción del mapa de contexto del repositorio. Recorte por relevancia para no saturar la ventana de contexto.
+- `git_bridge.py`: creación de rama, aplicación del diff y reporte de cambios para revisión manual. Solo se usa en modo `build`.
+
+## Instalación
+
+Requisitos: Python 3.10 o superior, Git.
+
+```
+pip install -r requirements.txt
+```
+
+La única dependencia inicial es `requests` para los proveedores HTTP. Sin claves ni servicios adicionales para el prototipo con tier gratuito.
+
+## Uso
+
+Ejemplo base en `peer`:
+
+```
+python cli.py --task "Corregir fuga de memoria en el puente Flutter/C++" --path ./mi-proyecto --models llama-3.1-70b mistral-large deepseek-r1 --max-rounds 4
+```
+
+Ejemplo base en `lead`:
+
+```
+python cli.py --task "Agregar logs y try/catch a cinco funciones" --path ./mi-proyecto --lead claude-3-7-sonnet --advisors gpt-4o deepseek-r1 --mode build
+```
+
+Parámetros:
+
+- `--task`: descripción técnica de la tarea. Obligatorio.
+- `--path`: ruta al repositorio a analizar. Obligatorio.
+- `--models`: lista de identificadores de modelo que forman la mesa peer. Mínimo 2. Incompatible con `--lead` / `--advisors`.
+- `--lead`: identificador del modelo líder. Requiere `--advisors`.
+- `--advisors`: lista de identificadores de modelos asesores. Mínimo 1.
+- `--writer` (solo `peer`): identificador del modelo que transcribe el resultado final. Debe pertenecer a `--models`. Opcional. Por defecto, el último en hablar.
+- `--mode`: `build`, `plan` o `ask`. Por defecto `build`.
+- `--max-rounds`: límite de rondas de deliberación antes de forzar votación final. Por defecto 4.
+- `--quorum` (solo `peer`): `unanime` o `mayoria`. Por defecto `unanime`.
+
+Comités de ejemplo:
+
+```
+# Peer, paranoia máxima contra alucinaciones
+python cli.py --task "..." --path ./app --models claude-3-7-sonnet gpt-4o deepseek-r1 --mode build --writer claude-3-7-sonnet
+
+# Lead, tarea quirúrgica y rápida
+python cli.py --task "..." --path ./app --lead claude-3-7-sonnet --advisors gpt-4o deepseek-r1 --mode build
+
+# Peer, solo plan sin tocar código
+python cli.py --task "..." --path ./app --models claude-3-7-sonnet gpt-4o --mode plan
+
+# Peer, consulta técnica
+python cli.py --task "..." --path ./app --models gpt-4o deepseek-r1 --mode ask
+```
+
+## Regla de parada
+
+En `peer`, el debate termina cuando se cumple alguna de estas condiciones, en este orden:
+
+1. Todos los modelos (o N-1 si `--quorum mayoria`) cierran con `ESTADO: CONSENSO_ALCANZADO` en la misma ronda.
+2. Se alcanza `--max-rounds`. En ese caso se pide una votación final y se emite el resultado según el modo (`build`: parche mayoritario; `plan`: plan; `ask`: respuesta).
+3. Fallo de proveedor o tiempo de espera. La ronda se registra como incompleta y se continúa con los modelos disponibles.
+
+En `lead`, termina cuando todos los asesores cierran con `ESTADO: CONFORME` o se alcanza `--max-rounds`. Una `OBJECION_BLOQUEANTE` devuelve el turno al líder. Un `VETO_ARQUITECTONICO` unánime obliga al replanteo total.
+
+El marcador de estado se extrae por expresión regular al final del mensaje. Si falta o viene malformado, el turno se cuenta como `DEBATIENDO`.
+
+## Control de contexto y costo
+
+- En deliberación solo se envían fragmentos relevantes del repositorio, no archivos completos.
+- El historial se trunca por rondas antiguas cuando supera el límite configurado; se conserva siempre el pitch inicial y la última ronda completa.
+- La emisión de código se hace una sola vez, por un solo modelo, para evitar duplicar tokens.
+
+## Estado actual
+
+`PeerEngine` implementado sobre `providers.py` y verificado con `MockProvider`. `LeadEngine`, `context.py`, `cli.py` y `git_bridge.py` pendientes.
