@@ -11,7 +11,9 @@ from providers import (
     OpenRouterProvider,
     PollinationsProvider,
     ProviderError,
+    check_model_availability,
     resolve_provider,
+    warn_unknown_models,
 )
 
 
@@ -159,3 +161,74 @@ def test_gives_up_after_two_retries(monkeypatch):
     p.URL = GroqProvider.URL
     with pytest.raises(ProviderError, match="límite"):
         p.chat([{"role": "user", "content": "hola"}])
+
+
+def _catalog_resp(ids=None, code=200):
+    class R:
+        status_code = code
+
+        def raise_for_status(self):
+            if code != 200:
+                err = providers.requests.HTTPError(f"{code} Error")
+                err.response = self
+                raise err
+
+        def json(self):
+            return {"data": [{"id": i} for i in (ids or [])]}
+
+    return R()
+
+
+def test_catalog_hit_and_miss(monkeypatch):
+    providers._CATALOG_CACHE.clear()
+    monkeypatch.setattr(
+        providers.requests, "get", lambda *a, **k: _catalog_resp(["a1", "a2"])
+    )
+    assert check_model_availability("groq/a1") == (True, None)
+    ok, msg = check_model_availability("groq/nope")
+    assert ok is False and "no figura" in msg
+
+
+def test_catalog_failure_is_silent(monkeypatch):
+    providers._CATALOG_CACHE.clear()
+
+    def boom(*a, **k):
+        raise providers.requests.Timeout("t")
+
+    monkeypatch.setattr(providers.requests, "get", boom)
+    assert check_model_availability("groq/cualquiera") == (True, None)
+    providers._CATALOG_CACHE.clear()
+    monkeypatch.setattr(
+        providers.requests, "get", lambda *a, **k: _catalog_resp(code=500)
+    )
+    assert check_model_availability("openrouter/x") == (True, None)
+
+
+def test_catalog_cached(monkeypatch):
+    providers._CATALOG_CACHE.clear()
+    calls = []
+
+    def get(*a, **k):
+        calls.append(1)
+        return _catalog_resp(["m"])
+
+    monkeypatch.setattr(providers.requests, "get", get)
+    check_model_availability("groq/m")
+    check_model_availability("groq/otro")
+    assert len(calls) == 1
+
+
+def test_mock_skips_catalog(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("no debe tocar red")
+
+    monkeypatch.setattr(providers.requests, "get", boom)
+    assert check_model_availability("mock:2") == (True, None)
+
+
+def test_warn_never_raises(capsys):
+    providers._CATALOG_CACHE["groq"] = {"real"}
+    warn_unknown_models(["groq/real", "groq/falso"])
+    out = capsys.readouterr().out
+    assert "groq/falso" in out and "groq/real" not in out
+    providers._CATALOG_CACHE.clear()

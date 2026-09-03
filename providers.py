@@ -224,3 +224,77 @@ def resolve_provider(model_identifier: str) -> BaseProvider:
         return OpenRouterProvider(model_id=real_model)
 
     return PollinationsProvider(model_id=model_identifier)
+
+
+_CATALOG_URLS = {
+    "groq": "https://api.groq.com/openai/v1/models",
+    "openrouter": "https://openrouter.ai/api/v1/models",
+    "pollinations": "https://gen.pollinations.ai/v1/models",
+}
+
+_CATALOG_KEY_ENV = {
+    "groq": "GROQ_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "pollinations": "POLLINATIONS_API_KEY",
+}
+
+_CATALOG_CACHE: Dict[str, Any] = {}
+
+
+def _split_provider(model_identifier: str) -> tuple:
+    mid = model_identifier.strip()
+    for prefix in ("groq/", "openrouter/"):
+        if mid.startswith(prefix):
+            return prefix[:-1], mid[len(prefix):]
+    if mid == "mock" or mid.startswith(("mock:", "mock/")):
+        return "mock", mid
+    return "pollinations", mid
+
+
+def _fetch_catalog(provider: str) -> Any:
+    """Descarga el catálogo de modelos (cacheado). None si no se puede verificar."""
+    if provider in _CATALOG_CACHE:
+        return _CATALOG_CACHE[provider]
+    ids = None
+    try:
+        headers: Dict[str, str] = {}
+        key = os.getenv(_CATALOG_KEY_ENV[provider])
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        resp = requests.get(_CATALOG_URLS[provider], headers=headers, timeout=4)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("data", []) if isinstance(data, dict) else []
+        ids = {m.get("id") for m in items if isinstance(m, dict) and m.get("id")}
+    except (requests.RequestException, ValueError, KeyError, AttributeError):
+        ids = None
+    _CATALOG_CACHE[provider] = ids
+    return ids
+
+
+def check_model_availability(model_identifier: str) -> tuple:
+    """Verificación suave: (True, None) si existe o no se puede comprobar.
+
+    Solo devuelve (False, aviso) con 200 OK y slug ausente. Nunca bloquea.
+    """
+    provider, real_id = _split_provider(model_identifier)
+    if provider == "mock":
+        return True, None
+    ids = _fetch_catalog(provider)
+    if ids is None or real_id in ids:
+        return True, None
+    return False, (
+        f"El modelo '{model_identifier}' no figura en el catálogo vivo de {provider}. "
+        "Es posible que la petición falle si el slug no existe."
+    )
+
+
+def warn_unknown_models(model_ids: List[str]) -> None:
+    """Imprime [AVISO] por cada modelo ausente del catálogo. Nunca falla."""
+    try:
+        for mid in model_ids:
+            ok, msg = check_model_availability(mid)
+            if not ok:
+                print(f"[AVISO] {msg}")
+    except Exception:
+        pass

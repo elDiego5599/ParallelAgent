@@ -20,7 +20,7 @@ from orchestrator import (
     build_emission_prompt,
     finish_build_output,
 )
-from providers import BaseProvider, ProviderError, resolve_provider
+from providers import BaseProvider, ProviderError, resolve_provider, warn_unknown_models
 
 
 CONFORME = "CONFORME"
@@ -250,6 +250,7 @@ class LeadEngine:
         self.interactive = interactive
 
     def run(self) -> int:
+        warn_unknown_models([self.lead_id, *self.advisor_ids])
         try:
             lead = resolve_provider(self.lead_id)
             advisor_providers = [resolve_provider(a) for a in self.advisor_ids]
@@ -280,6 +281,15 @@ class LeadEngine:
         )
         print("=" * 65)
         if self.mode == "build":
-            return finish_build_output(self.project_path, self.task, result.final_output)
+            def repair(prompt, _lead=lead):
+                return _lead.chat([
+                    {"role": "system", "content": (
+                        f"Eres {lead.model_id}. Corriges el diff como líder, "
+                        "sin añadir decisiones nuevas.")},
+                    {"role": "user", "content": prompt},
+                ])
+            return finish_build_output(
+                self.project_path, self.task, result.final_output, context, repair
+            )
         print(result.final_output)
         return 0 if result.final_output else 1

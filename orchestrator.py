@@ -11,7 +11,7 @@ from typing import Callable, Dict, List, Optional
 
 from context import build_repo_context
 from git_bridge import GitBridgeError, apply_consensus_to_branch
-from providers import BaseProvider, ProviderError, resolve_provider
+from providers import BaseProvider, ProviderError, resolve_provider, warn_unknown_models
 
 
 HUMAN = "HUMANO / TECH LEAD"
@@ -293,21 +293,66 @@ def run_debate(
     return result
 
 
-def finish_build_output(project_path: Path, task: str, final_output: str) -> int:
-    """Aplica el diff emitido sobre rama efímera. Común a PeerEngine y LeadEngine."""
-    if not final_output:
-        return 1
-    try:
-        info = apply_consensus_to_branch(project_path, task, final_output)
-    except GitBridgeError as e:
-        print(f"[ERROR GIT] {e}\nDiff emitido (no aplicado):")
-        print(final_output)
-        return 1
+def _report_branch(info: dict) -> None:
     print(f"Rama: {info['branch']}")
     print(f"Revisa con: {info['inspect']}")
     if info["dirty_before"]:
         print("[AVISO] El árbol tenía cambios sin commitear antes de empezar.")
-    return 0
+
+
+def build_repair_prompt(task: str, git_stderr: str, context: str = "") -> str:
+    """Prompt de auto-reparación: error exacto de git + contenido original."""
+    parts = [
+        f"Tarea: {task}",
+        "El parche diff que generaste falló al aplicarse con 'git apply'.",
+        "Detalle exacto del error de Git:",
+        "-" * 50,
+        git_stderr,
+        "-" * 50,
+    ]
+    if context:
+        parts.append(f"Contenido original de referencia:\n{context}")
+    parts.append(
+        "INSTRUCCIONES DE CORRECCIÓN: Analiza el error (líneas no coincidentes, "
+        "hunks desalineados u offsets). Emite EXCLUSIVAMENTE el diff unificado "
+        "corregido, crudo y completo. Sin cercas Markdown, sin explicaciones."
+    )
+    return "\n\n".join(parts)
+
+
+def finish_build_output(
+    project_path: Path,
+    task: str,
+    final_output: str,
+    context: str = "",
+    repair_chat=None,
+) -> int:
+    """Aplica el diff; ante fallo, da UNA oportunidad de auto-reparación al redactor."""
+    if not final_output:
+        return 1
+    try:
+        _report_branch(apply_consensus_to_branch(project_path, task, final_output))
+        return 0
+    except GitBridgeError as e:
+        err_text = e.stderr or str(e)
+        if repair_chat is None:
+            print(f"[ERROR GIT] {e}\nDiff emitido (no aplicado):")
+            print(final_output)
+            return 1
+    print("[BUILD] Parche inicial falló con error de Git. Solicitando auto-reparación...")
+    try:
+        fixed = repair_chat(build_repair_prompt(task, err_text, context))
+    except ProviderError as pe:
+        print(f"[ERROR] Auto-reparación falló: {pe}")
+        return 1
+    try:
+        _report_branch(apply_consensus_to_branch(project_path, task, fixed))
+        print("[BUILD] Auto-reparación aplicada.")
+        return 0
+    except GitBridgeError as e2:
+        print(f"[ERROR GIT] La reparación también falló: {e2}\nDiff reparado (no aplicado):")
+        print(fixed)
+        return 1
 
 
 class PeerEngine:
@@ -338,6 +383,7 @@ class PeerEngine:
         self.interactive = interactive
 
     def run(self) -> int:
+        warn_unknown_models(self.models)
         try:
             providers = [resolve_provider(m) for m in self.models]
         except ProviderError as e:
@@ -365,6 +411,19 @@ class PeerEngine:
         )
         print("=" * 65)
         if self.mode == "build":
-            return finish_build_output(self.project_path, self.task, result.final_output)
+            by_id = {p.model_id: p for p in providers}
+            writer_provider = by_id.get(result.writer)
+            repair = None
+            if writer_provider is not None:
+                def repair(prompt, _wp=writer_provider, _w=result.writer):
+                    return _wp.chat([
+                        {"role": "system", "content": (
+                            f"Eres {_w}. Corriges el diff como redactor, "
+                            "sin añadir decisiones nuevas.")},
+                        {"role": "user", "content": prompt},
+                    ])
+            return finish_build_output(
+                self.project_path, self.task, result.final_output, context, repair
+            )
         print(result.final_output)
         return 0 if result.final_output else 1

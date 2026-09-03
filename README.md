@@ -45,7 +45,7 @@ El orquestador no opina sobre el código. Solo reparte turnos, mantiene la trans
 
 ## Modos de ejecución
 
-- `build` (por defecto): deliberación y emisión del diff directamente en una rama de Git.
+- `build` (por defecto): deliberación y emisión del diff directamente en una rama de Git. Si el diff falla al aplicar, el redactor tiene una oportunidad de auto-reparación con el error exacto.
 - `plan`: deliberación y devolución de un plan técnico en Markdown. No modifica código ni crea ramas.
 - `ask`: consulta técnica o auditoría. Los modelos debaten entre sí y devuelven la respuesta. No emite parches.
 
@@ -54,7 +54,7 @@ El orquestador no opina sobre el código. Solo reparte turnos, mantiene la trans
 - `cli.py`: punto de entrada. Infiere la topología (`--models` para `peer`, `--lead` con `--advisors` para `lead`) y parámetros de tarea, ruta, límites y modo.
 - `orchestrator.py`: `PeerEngine`, estados, HITL y salida a Git compartida (`finish_build_output`).
 - `lead_engine.py`: `LeadEngine` (líder propone y redacta, asesores auditan con `CONFORME` / `OBJECION_BLOQUEANTE` / `VETO_ARQUITECTONICO`).
-- `providers.py`: adaptadores para proveedores con tier gratuito (Pollinations, OpenRouter, Groq). Cada adaptador expone la misma interfaz de chat.
+- `providers.py`: adaptadores (Pollinations, OpenRouter, Groq) con reintento ante 429 y chequeo suave de slugs contra el catálogo vivo (solo avisa).
 - `context.py`: construcción del mapa de contexto del repositorio. Recorte por relevancia para no saturar la ventana de contexto.
 - `git_bridge.py`: creación de rama, aplicación del diff y reporte de cambios para revisión manual. Solo se usa en modo `build`.
 

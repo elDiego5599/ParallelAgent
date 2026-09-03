@@ -14,7 +14,9 @@ import subprocess
 class GitBridgeError(Exception):
     """Fallo en validación, creación de rama o aplicación del diff."""
 
-    pass
+    def __init__(self, message: str, stderr: str = ""):
+        super().__init__(message)
+        self.stderr = stderr
 
 
 _FENCE_RE = re.compile(r"```(?:diff)?\s*\n(.*?)```", re.DOTALL)
@@ -43,9 +45,8 @@ def _run_git(path: Path, *args: str, input_text: str | None = None) -> str:
     except (subprocess.SubprocessError, OSError) as e:
         raise GitBridgeError(f"Fallo al ejecutar git {' '.join(args)}: {e}")
     if result.returncode != 0:
-        raise GitBridgeError(
-            f"git {' '.join(args)} falló: {result.stderr.strip() or result.stdout.strip()}"
-        )
+        err = result.stderr.strip() or result.stdout.strip()
+        raise GitBridgeError(f"git {' '.join(args)} falló: {err}", stderr=err)
     return result.stdout.strip()
 
 
