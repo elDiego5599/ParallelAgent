@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Punto de entrada de ParalelAgent (CLI).
+"""Punto de entrada de ParallelAgent (CLI).
 
 Parsea argumentos, infiere la topología (peer vs lead), valida incompatibilidades
 y despacha la ejecución al motor correspondiente.
@@ -15,8 +15,8 @@ from orchestrator import LeadEngine, PeerEngine
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="paralel-agent",
-        description="ParalelAgent: Sistema de deliberación multi-modelo para código.",
+        prog="parallel-agent",
+        description="ParallelAgent: Sistema de deliberación multi-modelo para código.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -174,7 +174,7 @@ def print_banner(topology: str, args: argparse.Namespace) -> None:
     """Muestra un resumen visual estructurado antes de iniciar la sesión."""
     print("=" * 65)
     print(
-        f" ParalelAgent | Topología: {topology.upper()} | Modo: {args.mode.upper()}"
+        f" ParallelAgent | Topología: {topology.upper()} | Modo: {args.mode.upper()}"
     )
     print("=" * 65)
     print(f"Tarea:       {args.task}")

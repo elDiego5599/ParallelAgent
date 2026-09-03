@@ -1,4 +1,4 @@
-# ParalelAgent
+# ParallelAgent
 
 Sistema local de deliberación multi-modelo para tareas de programación. Varios modelos de lenguaje discuten una misma tarea sobre un repositorio real hasta alcanzar una solución común, que se entrega en una rama de Git separada para revisión.
 

@@ -1,4 +1,4 @@
-"""Adaptadores de proveedores de LLM para ParalelAgent.
+"""Adaptadores de proveedores de LLM para ParallelAgent.
 
 Todos los proveedores implementan la interfaz común BaseProvider.
 """
@@ -199,8 +199,8 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
     def _get_headers(self) -> Dict[str, str]:
         headers = super()._get_headers()
-        headers["HTTP-Referer"] = "https://github.com/ParalelAgent"
-        headers["X-Title"] = "ParalelAgent"
+        headers["HTTP-Referer"] = "https://github.com/ParallelAgent"
+        headers["X-Title"] = "ParallelAgent"
         return headers
 
 

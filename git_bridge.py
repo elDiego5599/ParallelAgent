@@ -1,4 +1,4 @@
-"""Puente con Git para ParalelAgent.
+"""Puente con Git para ParallelAgent.
 
 Aplica el parche acordado sobre una rama efímera de forma transaccional:
 si el diff falla, vuelve a la rama original y borra la temporal.

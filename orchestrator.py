@@ -1,4 +1,4 @@
-"""Orquestador del debate para ParalelAgent.
+"""Orquestador del debate para ParallelAgent.
 
 No opina sobre el código. Reparte turnos, mantiene la transcripción
 compartida y aplica la regla de parada por quórum.
