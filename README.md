@@ -68,14 +68,9 @@ La única dependencia inicial es `requests` para los proveedores HTTP. Sin clave
 
 ## Configuración
 
-Copia `.env.example` a `.env` y completa tus claves (nunca commitees el `.env` real):
+Los proveedores leen las claves de las variables de entorno (`GROQ_API_KEY`, `OPENROUTER_API_KEY`). `.env.example` documenta el formato; expórtalas en tu shell (`export GROQ_API_KEY=...`) o con tu gestor habitual. El `.env` real nunca se commitea.
 
-```
-GROQ_API_KEY=gsk_...
-OPENROUTER_API_KEY=sk-or-...
-```
-
-Pollinations no requiere clave. Los proveedores leen las variables de entorno directamente.
+Pollinations no requiere clave.
 
 ## Pruebas
 
