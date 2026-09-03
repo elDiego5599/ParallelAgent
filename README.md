@@ -135,7 +135,9 @@ En `peer`, el debate termina cuando se cumple alguna de estas condiciones, en es
 
 En `lead`, termina cuando todos los asesores cierran con `ESTADO: CONFORME` o se alcanza `--max-rounds`. Una `OBJECION_BLOQUEANTE` devuelve el turno al líder. Un `VETO_ARQUITECTONICO` unánime obliga al replanteo total.
 
-El marcador de estado se extrae por expresión regular al final del mensaje. Si falta o viene malformado, el turno se cuenta como `DEBATIENDO`.
+El marcador de estado se extrae por expresión regular en cualquier posición del mensaje (tolera envoltorios Markdown como `**ESTADO: ...**`). Si falta o viene malformado, el turno se cuenta como `DEBATIENDO`.
+
+Ante 429 (límite de tokens por minuto) el proveedor reintenta hasta 2 veces respetando `Retry-After`.
 
 ## Control de contexto y costo
 

@@ -12,6 +12,7 @@ def test_parse_lead_estados():
     assert parse_lead_estado("x\nESTADO: VETO_ARQUITECTONICO") == "VETO_ARQUITECTONICO"
     assert parse_lead_estado("x\nESTADO: PREGUNTA_AL_USUARIO") == "PREGUNTA_AL_USUARIO"
     assert parse_lead_estado("ruido") == "DEBATIENDO"
+    assert parse_lead_estado("**ESTADO: CONFORME**") == "CONFORME"
 
 
 class Advisor(BaseProvider):

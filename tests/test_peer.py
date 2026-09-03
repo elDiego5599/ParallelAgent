@@ -9,6 +9,8 @@ def test_parse_estado():
     assert parse_estado("x\nestado: debatiendo") == "DEBATIENDO"
     assert parse_estado("x\nESTADO: PREGUNTA_AL_USUARIO") == QUESTION
     assert parse_estado("sin marcador") == "DEBATIENDO"
+    assert parse_estado("cierre\n**ESTADO: DEBATIENDO**") == "DEBATIENDO"
+    assert parse_estado("*ESTADO: CONSENSO_ALCANZADO* chao") == "CONSENSO_ALCANZADO"
 
 
 def test_unanimous_closes_when_slowest_agrees():
