@@ -63,10 +63,16 @@ El orquestador no opina sobre el código. Solo reparte turnos, mantiene la trans
 Requisitos: Python 3.10 o superior, Git.
 
 ```
-pip install -r requirements.txt
+pip install -e .
 ```
 
-La única dependencia inicial es `requests` para los proveedores HTTP. Sin claves ni servicios adicionales para el prototipo con tier gratuito.
+Queda registrado el comando global `parallel-agent`, usable desde cualquier directorio:
+
+```
+parallel-agent --task "..." --path ./mi-proyecto --models mock mock:2 --mode plan
+```
+
+Para desarrollo y pruebas: `pip install -e ".[dev]"` y `pytest`.
 
 ## Configuración
 

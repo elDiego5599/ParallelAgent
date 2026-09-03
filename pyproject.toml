@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parallel-agent"
+version = "0.1.0"
+description = "Sistema local de deliberación multi-modelo para tareas de programación."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "ParallelAgent Contributors" }
+]
+keywords = ["multi-agent", "llm", "consensus", "git", "code-generation", "cli"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Code Generators",
+    "Environment :: Console",
+]
+
+dependencies = [
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+parallel-agent = "cli:main"
+
+[tool.setuptools]
+py-modules = [
+    "cli",
+    "orchestrator",
+    "lead_engine",
+    "providers",
+    "context",
+    "git_bridge",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
