@@ -1,5 +1,7 @@
 # ParallelAgent
 
+[![CI](https://github.com/elDiego5599/ParallelAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/elDiego5599/ParallelAgent/actions/workflows/ci.yml)
+
 Sistema local de deliberación multi-modelo para tareas de programación. Varios modelos de lenguaje discuten una misma tarea sobre un repositorio real hasta alcanzar una solución común, que se entrega en una rama de Git separada para revisión.
 
 No es un pipeline por etapas. Es una mesa de trabajo compartida: los modelos conocen a los demás participantes, leen el historial completo de la discusión y se corrigen entre sí antes de emitir código.
