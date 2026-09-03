@@ -172,15 +172,16 @@ def build_repo_tree(files: List[Path], repo_path: Path, max_lines: int = 40) -> 
 def build_repo_context(
     repo_path: Path,
     task: str,
-    max_total_chars: int = 30000,
-    max_file_chars: int = 8000,
+    max_total_chars: int = 12000,
+    max_file_chars: int = 4000,
 ) -> str:
     """Construye el mapa de contexto consolidado para inyectar en el prompt inicial.
 
     Args:
         repo_path: Ruta raíz del proyecto.
         task: Descripción técnica del requerimiento.
-        max_total_chars: Presupuesto total de caracteres de contexto (~7k tokens).
+        max_total_chars: Presupuesto total de caracteres de contexto (~3k tokens,
+            seguro bajo límites TPM de 8000 de tiers gratuitos).
         max_file_chars: Límite por archivo individual para evitar monopolios.
 
     Returns:
