@@ -88,7 +88,8 @@ def test_hitl_non_interactive_assumes_conservative():
     assert r.consensus_reached
 
 
-def test_hitl_question_cap():    asked = []
+def test_hitl_question_cap():
+    asked = []
     r = run_debate(
         [Questioner("qa"), Questioner("qb")],
         task="t",
