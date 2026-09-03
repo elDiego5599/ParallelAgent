@@ -21,8 +21,10 @@ def test_resolve_mock_variants():
     assert resolve_provider("mock").rounds_before_consensus == 2
 
 
-def test_resolve_prefixed():
+def test_resolve_prefixed(monkeypatch):
+    monkeypatch.setenv("POLLINATIONS_API_KEY", "k")
     assert isinstance(resolve_provider("algo-modelo"), PollinationsProvider)
+    monkeypatch.delenv("POLLINATIONS_API_KEY")
     with pytest.raises(ProviderError):
         resolve_provider("groq/llama-x")
     with pytest.raises(ProviderError):
