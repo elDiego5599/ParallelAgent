@@ -17,6 +17,19 @@ class GitBridgeError(Exception):
     pass
 
 
+_FENCE_RE = re.compile(r"```(?:diff)?\s*\n(.*?)```", re.DOTALL)
+
+
+def _extract_diff(diff_str: str) -> str:
+    """Extrae el diff si el modelo lo envolvió en cercas Markdown.
+
+    Garantiza un único salto final: git apply rechaza parches sin newline.
+    """
+    m = _FENCE_RE.search(diff_str or "")
+    clean = m.group(1).strip() if m else (diff_str or "").strip()
+    return clean + "\n" if clean else ""
+
+
 def _run_git(path: Path, *args: str, input_text: str | None = None) -> str:
     try:
         result = subprocess.run(
@@ -81,7 +94,8 @@ def apply_consensus_to_branch(
             f"La ruta no es un repositorio Git: {path}. "
             "Inicialízalo con git init o apunta --path a uno válido."
         )
-    if not diff_str or not diff_str.strip():
+    diff_str = _extract_diff(diff_str)
+    if not diff_str:
         raise GitBridgeError("Diff vacío: nada que aplicar.")
 
     dirty = is_dirty(path)
@@ -92,8 +106,8 @@ def apply_consensus_to_branch(
     try:
         _run_git(path, "checkout", "-b", branch)
         created = True
-        _run_git(path, "apply", "--check", input_text=diff_str)
-        _run_git(path, "apply", input_text=diff_str)
+        _run_git(path, "apply", "--recount", "--check", input_text=diff_str)
+        _run_git(path, "apply", "--recount", input_text=diff_str)
         _run_git(path, "add", "-A")
         _run_git(
             path, "commit", "-m", commit_message or f"consensus: {task[:72]}"
