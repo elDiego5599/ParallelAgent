@@ -66,6 +66,26 @@ pip install -r requirements.txt
 
 La única dependencia inicial es `requests` para los proveedores HTTP. Sin claves ni servicios adicionales para el prototipo con tier gratuito.
 
+## Configuración
+
+Copia `.env.example` a `.env` y completa tus claves (nunca commitees el `.env` real):
+
+```
+GROQ_API_KEY=gsk_...
+OPENROUTER_API_KEY=sk-or-...
+```
+
+Pollinations no requiere clave. Los proveedores leen las variables de entorno directamente.
+
+## Pruebas
+
+```
+pip install pytest
+pytest tests/
+```
+
+44 pruebas con `MockProvider`, sin red ni claves. Cubren CLI, quórum peer, fast-path y vetos lead, HITL, contexto y Git.
+
 ## Uso
 
 Ejemplo base en `peer`:
