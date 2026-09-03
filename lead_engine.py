@@ -236,6 +236,7 @@ class LeadEngine:
         mode: str = "build",
         max_rounds: int = 4,
         context: str = "",
+        context_budget: int = 12000,
         interactive: bool = True,
     ):
         self.task = task
@@ -245,6 +246,7 @@ class LeadEngine:
         self.mode = mode
         self.max_rounds = max_rounds
         self.context = context
+        self.context_budget = context_budget
         self.interactive = interactive
 
     def run(self) -> int:
@@ -257,7 +259,9 @@ class LeadEngine:
         if lead.model_id in [a.model_id for a in advisor_providers]:
             print(f"[ERROR] '{lead.model_id}' no puede ser líder y asesor a la vez.")
             return 2
-        context = self.context or build_repo_context(self.project_path, self.task)
+        context = self.context or build_repo_context(
+            self.project_path, self.task, max_total_chars=self.context_budget
+        )
         print(f"Contexto: {len(context)} caracteres del repositorio.")
         result = run_lead_debate(
             lead,

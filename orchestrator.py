@@ -306,6 +306,7 @@ class PeerEngine:
         max_rounds: int = 4,
         quorum: str = "unanime",
         context: str = "",
+        context_budget: int = 12000,
         interactive: bool = True,
     ):
         self.task = task
@@ -316,6 +317,7 @@ class PeerEngine:
         self.max_rounds = max_rounds
         self.quorum = quorum
         self.context = context
+        self.context_budget = context_budget
         self.interactive = interactive
 
     def run(self) -> int:
@@ -324,7 +326,9 @@ class PeerEngine:
         except ProviderError as e:
             print(f"[ERROR] {e}")
             return 1
-        context = self.context or build_repo_context(self.project_path, self.task)
+        context = self.context or build_repo_context(
+            self.project_path, self.task, max_total_chars=self.context_budget
+        )
         print(f"Contexto: {len(context)} caracteres del repositorio.")
         result = run_debate(
             providers,

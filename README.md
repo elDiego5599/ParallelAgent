@@ -107,6 +107,7 @@ Parámetros:
 - `--max-rounds`: límite de rondas de deliberación antes de forzar votación final. Por defecto 4.
 - `--quorum` (solo `peer`): `unanime` o `mayoria`. Por defecto `unanime`.
 - `--non-interactive`: no pedir aclaraciones por terminal (CI/CD). Por defecto se pregunta.
+- `--context-budget`: caracteres máximos del mapa de contexto. Por defecto 12000 (~3k tokens, seguro bajo TPM de 8000 de tiers gratuitos).
 
 Comités de ejemplo:
 

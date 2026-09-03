@@ -101,6 +101,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="No preguntar por terminal. Ante PREGUNTA_AL_USUARIO se asume "
         "la vía conservadora (útil en CI/CD).",
     )
+    common_group.add_argument(
+        "--context-budget",
+        type=int,
+        default=12000,
+        metavar="N",
+        help="Presupuesto de caracteres del mapa de contexto (por defecto: 12000). "
+        "Bájalo si tu tier limita tokens por minuto.",
+    )
 
 
     return parser
@@ -121,9 +129,11 @@ def validate_and_infer_topology(
             f"La ruta debe ser un directorio de proyecto válido: {args.path}"
         )
 
-    # 2. Validación de rondas
+    # 2. Validación de rondas y presupuesto
     if args.max_rounds < 1:
         raise ValueError("--max-rounds debe ser un entero mayor o igual a 1.")
+    if args.context_budget < 1000:
+        raise ValueError("--context-budget debe ser un entero mayor o igual a 1000.")
 
     has_peer = bool(args.models)
     has_lead = bool(args.lead or args.advisors)
@@ -232,6 +242,7 @@ def main() -> int:
             max_rounds=args.max_rounds,
             quorum=args.quorum,
             interactive=not args.non_interactive,
+            context_budget=args.context_budget,
         )
         return engine.run()
 
@@ -244,6 +255,7 @@ def main() -> int:
             mode=args.mode,
             max_rounds=args.max_rounds,
             interactive=not args.non_interactive,
+            context_budget=args.context_budget,
         )
         return engine.run()
 
