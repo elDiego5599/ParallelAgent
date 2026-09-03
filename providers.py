@@ -6,6 +6,7 @@ Todos los proveedores implementan la interfaz común BaseProvider.
 from abc import ABC, abstractmethod
 import os
 import re
+import time
 from typing import Any, Dict, List
 import requests
 
@@ -14,6 +15,15 @@ class ProviderError(Exception):
     """Excepción base para fallos de red, autenticación o formato en proveedores."""
 
     pass
+
+
+def _retry_after_seconds(response: Any) -> float:
+    """Lee el header Retry-After (segundos). Por defecto 20, tope 60."""
+    try:
+        wait = float(response.headers.get("Retry-After", "20"))
+    except (ValueError, TypeError, AttributeError):
+        wait = 20.0
+    return max(0.0, min(wait, 60.0))
 
 
 class BaseProvider(ABC):
@@ -105,37 +115,44 @@ class OpenAICompatibleProvider(BaseProvider):
             "messages": messages,
             "temperature": 0.3,
         }
-        try:
-            response = requests.post(
-                self.URL, headers=self._get_headers(), json=payload, timeout=90
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            # Validación defensiva del payload estándar OpenAI
-            choices = data.get("choices")
-            if not choices or not isinstance(choices, list):
-                raise ValueError(
-                    f"Respuesta sin choices válidos: {str(data)[:200]}"
+        retries = 0
+        while True:
+            try:
+                response = requests.post(
+                    self.URL, headers=self._get_headers(), json=payload, timeout=90
                 )
+                response.raise_for_status()
+                data = response.json()
 
-            content = choices[0].get("message", {}).get("content")
-            if content is None:
-                raise ValueError(
-                    f"Mensaje sin campo 'content': {str(data)[:200]}"
+                # Validación defensiva del payload estándar OpenAI
+                choices = data.get("choices")
+                if not choices or not isinstance(choices, list):
+                    raise ValueError(
+                        f"Respuesta sin choices válidos: {str(data)[:200]}"
+                    )
+
+                content = choices[0].get("message", {}).get("content")
+                if content is None:
+                    raise ValueError(
+                        f"Mensaje sin campo 'content': {str(data)[:200]}"
+                    )
+
+                return content.strip()
+
+            except requests.HTTPError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 429 and retries < 2:
+                    time.sleep(_retry_after_seconds(getattr(e, "response", None)))
+                    retries += 1
+                    continue
+                detail = getattr(getattr(e, "response", None), "text", "") or ""
+                raise ProviderError(
+                    f"Fallo en API compatible ({self.model_id}): {e} {detail[:300]}".strip()
                 )
-
-            return content.strip()
-
-        except requests.HTTPError as e:
-            detail = getattr(getattr(e, "response", None), "text", "") or ""
-            raise ProviderError(
-                f"Fallo en API compatible ({self.model_id}): {e} {detail[:300]}".strip()
-            )
-        except (requests.RequestException, ValueError, KeyError, IndexError) as e:
-            raise ProviderError(
-                f"Fallo en API compatible ({self.model_id}): {e}"
-            )
+            except (requests.RequestException, ValueError, KeyError, IndexError) as e:
+                raise ProviderError(
+                    f"Fallo en API compatible ({self.model_id}): {e}"
+                )
 
 
 class GroqProvider(OpenAICompatibleProvider):

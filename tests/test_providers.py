@@ -1,5 +1,7 @@
 """Contrato de proveedores: resolución, mocks y manejo de errores."""
 
+from types import SimpleNamespace
+
 import pytest
 
 import providers
@@ -91,7 +93,6 @@ def test_pollinations_parses_choices(monkeypatch):
 
 
 def test_http_error_surfaces_server_message(monkeypatch):
-    from types import SimpleNamespace
 
     def boom(*a, **k):
         err = providers.requests.HTTPError("401 Client Error")
@@ -101,4 +102,60 @@ def test_http_error_surfaces_server_message(monkeypatch):
     monkeypatch.setattr(providers.requests, "post", boom)
     p = PollinationsProvider("mistral", api_key="mala")
     with pytest.raises(ProviderError, match="key requerida"):
+        p.chat([{"role": "user", "content": "hola"}])
+
+
+def test_retries_429_then_succeeds(monkeypatch):
+    calls = []
+    slept = []
+
+    class Resp429:
+        status_code = 429
+        headers = {"Retry-After": "0"}
+        text = "límite"
+
+        def raise_for_status(self):
+            err = providers.requests.HTTPError("429 Too Many Requests")
+            err.response = self
+            raise err
+
+    class RespOk:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "listo"}}]}
+
+    def flaky(*a, **k):
+        calls.append(1)
+        return Resp429() if len(calls) == 1 else RespOk()
+
+    monkeypatch.setattr(providers.requests, "post", flaky)
+    monkeypatch.setattr(providers.time, "sleep", lambda s: slept.append(s))
+    p = GroqProvider.__new__(GroqProvider)
+    p.model_id = "m"
+    p.api_key = "k"
+    p.URL = GroqProvider.URL
+    assert p.chat([{"role": "user", "content": "hola"}]) == "listo"
+    assert len(calls) == 2 and slept == [0]
+
+
+def test_gives_up_after_two_retries(monkeypatch):
+    class Resp429:
+        status_code = 429
+        headers = {}
+        text = "límite"
+
+        def raise_for_status(self):
+            err = providers.requests.HTTPError("429 Too Many Requests")
+            err.response = self
+            raise err
+
+    monkeypatch.setattr(providers.requests, "post", lambda *a, **k: Resp429())
+    monkeypatch.setattr(providers.time, "sleep", lambda s: None)
+    p = GroqProvider.__new__(GroqProvider)
+    p.model_id = "m"
+    p.api_key = "k"
+    p.URL = GroqProvider.URL
+    with pytest.raises(ProviderError, match="límite"):
         p.chat([{"role": "user", "content": "hola"}])
