@@ -276,6 +276,23 @@ def run_debate(
     return result
 
 
+def finish_build_output(project_path: Path, task: str, final_output: str) -> int:
+    """Aplica el diff emitido sobre rama efímera. Común a PeerEngine y LeadEngine."""
+    if not final_output:
+        return 1
+    try:
+        info = apply_consensus_to_branch(project_path, task, final_output)
+    except GitBridgeError as e:
+        print(f"[ERROR GIT] {e}\nDiff emitido (no aplicado):")
+        print(final_output)
+        return 1
+    print(f"Rama: {info['branch']}")
+    print(f"Revisa con: {info['inspect']}")
+    if info["dirty_before"]:
+        print("[AVISO] El árbol tenía cambios sin commitear antes de empezar.")
+    return 0
+
+
 class PeerEngine:
     """Motor de topología peer. Resuelve proveedores y ejecuta run_debate."""
 
@@ -327,47 +344,6 @@ class PeerEngine:
         )
         print("=" * 65)
         if self.mode == "build":
-            if not result.final_output:
-                return 1
-            try:
-                info = apply_consensus_to_branch(
-                    self.project_path, self.task, result.final_output
-                )
-            except GitBridgeError as e:
-                print(f"[ERROR GIT] {e}\nDiff emitido (no aplicado):")
-                print(result.final_output)
-                return 1
-            print(f"Rama: {info['branch']}")
-            print(f"Revisa con: {info['inspect']}")
-            if info["dirty_before"]:
-                print("[AVISO] El árbol tenía cambios sin commitear antes de empezar.")
-            return 0
+            return finish_build_output(self.project_path, self.task, result.final_output)
         print(result.final_output)
         return 0 if result.final_output else 1
-
-
-class LeadEngine:
-    """Motor de topología lead. Pendiente de implementación."""
-
-    def __init__(
-        self,
-        task: str,
-        project_path: Path,
-        lead: str,
-        advisors: List[str],
-        mode: str = "build",
-        max_rounds: int = 4,
-    ):
-        self.task = task
-        self.project_path = project_path
-        self.lead = lead
-        self.advisors = advisors
-        self.mode = mode
-        self.max_rounds = max_rounds
-
-    def run(self) -> int:
-        print(
-            "[AVISO] LeadEngine aún está en desarrollo. "
-            "Ejecuta con --models (peer)."
-        )
-        return 1

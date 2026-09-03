@@ -10,7 +10,8 @@ from pathlib import Path
 import sys
 from typing import Literal
 
-from orchestrator import LeadEngine, PeerEngine
+from orchestrator import PeerEngine
+from lead_engine import LeadEngine
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -242,6 +243,7 @@ def main() -> int:
             advisors=args.advisors,
             mode=args.mode,
             max_rounds=args.max_rounds,
+            interactive=not args.non_interactive,
         )
         return engine.run()
 
