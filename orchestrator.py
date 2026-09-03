@@ -74,6 +74,16 @@ def build_system_prompt(model_id: str, peers: List[str], task: str, mode: str) -
     )
 
 
+def _window_transcript(transcript: List[Turn], round_num: int) -> tuple:
+    """Ventana deslizante: conserva la ronda 1 (pitches) y desde la anterior.
+
+    Descarta la charla intermedia para mantener el payload acotado sin importar
+    la cantidad de rondas. Devuelve (turnos, omitidos).
+    """
+    keep = [t for t in transcript if t.round == 1 or t.round >= round_num - 1]
+    return keep, len(transcript) - len(keep)
+
+
 def build_turn_prompt(
     task: str,
     context: str,
@@ -85,9 +95,14 @@ def build_turn_prompt(
     if context:
         lines.append(f"Contexto del repositorio:\n{context}")
     if transcript:
-        lines.append("Transcripción hasta ahora:")
-        for t in transcript:
+        lines.append("Transcripción hasta ahora (ventana deslizante):")
+        windowed, omitted = _window_transcript(transcript, round_num)
+        for t in windowed:
             lines.append(f"--- [{t.model}] (ronda {t.round}, {t.estado}) ---\n{t.text}")
+        if omitted:
+            lines.append(
+                f"[... {omitted} intervenciones intermedias omitidas por ventana ...]"
+            )
     else:
         lines.append("Eres el primero en hablar. Presenta tu pitch inicial.")
     lines.append(

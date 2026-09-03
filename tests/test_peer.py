@@ -1,7 +1,7 @@
 """Motor peer: quórum, redactor, HITL y regresión."""
 
 from providers import BaseProvider, resolve_provider
-from orchestrator import QUESTION, run_debate, parse_estado
+from orchestrator import QUESTION, Turn, build_turn_prompt, run_debate, parse_estado
 
 
 def test_parse_estado():
@@ -88,8 +88,7 @@ def test_hitl_non_interactive_assumes_conservative():
     assert r.consensus_reached
 
 
-def test_hitl_question_cap():
-    asked = []
+def test_hitl_question_cap():    asked = []
     r = run_debate(
         [Questioner("qa"), Questioner("qb")],
         task="t",
@@ -101,3 +100,16 @@ def test_hitl_question_cap():
     )
     assert len(asked) == 1
     assert any("Límite de preguntas" in t.text for t in r.transcript)
+
+
+def test_sliding_window_drops_middle_rounds():
+    tr = [
+        Turn(round=r, model="m", text="t%d" % r, estado="DEBATIENDO")
+        for r in [1, 1, 2, 2, 3, 3, 4, 4, 5]
+    ]
+    prompt = build_turn_prompt("tarea", "", tr, 5, "plan")
+    assert "t1" in prompt and "t4" in prompt and "t5" in prompt
+    assert "t2" not in prompt and "t3" not in prompt
+    assert "omitidas por ventana" in prompt
+    early = build_turn_prompt("tarea", "", tr[:4], 2, "plan")
+    assert "omitidas por ventana" not in early
