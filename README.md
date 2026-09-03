@@ -45,7 +45,7 @@ El orquestador no opina sobre el código. Solo reparte turnos, mantiene la trans
 
 ## Modos de ejecución
 
-- `build` (por defecto): deliberación y emisión del diff directamente en una rama de Git. Si el diff falla al aplicar, el redactor tiene una oportunidad de auto-reparación con el error exacto.
+- `build` (por defecto): deliberación y emisión del diff directamente en una rama de Git. Si el diff falla al aplicar, el redactor tiene una oportunidad de auto-reparación con el error exacto. Tu rama actual nunca se modifica: el trabajo queda en `consensus/...` y vuelves a donde estabas.
 - `plan`: deliberación y devolución de un plan técnico en Markdown. No modifica código ni crea ramas.
 - `ask`: consulta técnica o auditoría. Los modelos debaten entre sí y devuelven la respuesta. No emite parches.
 
