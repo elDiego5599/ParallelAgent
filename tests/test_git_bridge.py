@@ -10,6 +10,7 @@ from git_bridge import (
     _extract_diff,
     apply_consensus_to_branch,
     build_branch_name,
+    check_clean_working_tree,
     current_branch,
     is_dirty,
     is_git_repo,
@@ -84,6 +85,61 @@ def test_dirty_is_reported_not_blocked(tmp_path):
     (tmp_path / "f.txt").write_text("cambio sin commitear\n")
     assert is_dirty(tmp_path) is True
     assert is_git_repo(tmp_path) is True
+
+
+def _consensus_branches(path):
+    return subprocess.run(
+        ["git", "branch", "--list", "consensus/*"],
+        cwd=path, capture_output=True, text=True, check=True,
+    ).stdout
+
+
+def test_dirty_tracked_aborts_without_branch(tmp_path):
+    init_repo(tmp_path)
+    base = current_branch(tmp_path)
+    (tmp_path / "f.txt").write_text("WIP del usuario\n")
+    with pytest.raises(GitBridgeError, match="sin commitear"):
+        apply_consensus_to_branch(tmp_path, "tarea x", DIFF)
+    assert "consensus/" not in _consensus_branches(tmp_path)
+    assert current_branch(tmp_path) == base
+    # WIP intacto, no fue commiteado ni arrastrado
+    assert (tmp_path / "f.txt").read_text() == "WIP del usuario\n"
+
+
+def test_dirty_untracked_aborts_without_branch(tmp_path):
+    init_repo(tmp_path)
+    base = current_branch(tmp_path)
+    (tmp_path / "nuevo.txt").write_text("wip untracked\n")
+    with pytest.raises(GitBridgeError, match="sin commitear"):
+        apply_consensus_to_branch(tmp_path, "tarea x", DIFF)
+    assert "consensus/" not in _consensus_branches(tmp_path)
+    assert current_branch(tmp_path) == base
+    assert (tmp_path / "nuevo.txt").read_text() == "wip untracked\n"
+
+
+def test_check_clean_working_tree(tmp_path):
+    init_repo(tmp_path)
+    check_clean_working_tree(tmp_path)  # limpio: no lanza
+    (tmp_path / "f.txt").write_text("sucio\n")
+    with pytest.raises(GitBridgeError, match="stash"):
+        check_clean_working_tree(tmp_path)
+
+
+def test_finish_build_output_dirty_no_repair(tmp_path):
+    from orchestrator import finish_build_output
+
+    init_repo(tmp_path)
+    (tmp_path / "f.txt").write_text("WIP\n")
+    called = []
+
+    def boom(prompt):
+        called.append(prompt)
+        return DIFF
+
+    rc = finish_build_output(tmp_path, "t", DIFF, repair_chat=boom)
+    assert rc == 1
+    assert called == []  # fatal: no debe intentar auto-reparación
+    assert "consensus/" not in _consensus_branches(tmp_path)
 
 
 def test_slug_and_branch_name():
