@@ -279,47 +279,65 @@ class LeadEngine:
         self.context_budget = context_budget
         self.interactive = interactive
 
-    def run(self) -> int:
+    def run_cycle(self, task: Optional[str] = None, verbose: bool = True):
+        """Un ciclo de deliberación SIN efectos Git. Devuelve (result, lead, advisors, labels, context)."""
         warn_unknown_models([self.lead_id, *self.advisor_ids])
-        try:
-            lead = resolve_provider(self.lead_id)
-            advisor_providers = [resolve_provider(a) for a in self.advisor_ids]
-        except ProviderError as e:
-            print(f"[ERROR] {e}")
-            return 1
-        if lead.model_id in [a.model_id for a in advisor_providers]:
-            print(f"[ERROR] '{lead.model_id}' no puede ser líder y asesor a la vez.")
-            return 2
+        lead_api, _ = parse_model_spec(self.lead_id)
+        advisor_apis = [parse_model_spec(a)[0] for a in self.advisor_ids]
+        lead = resolve_provider(lead_api)
+        advisor_providers = [resolve_provider(a) for a in advisor_apis]
+        if lead_api in advisor_apis:
+            raise ValueError(f"'{lead_api}' no puede ser líder y asesor a la vez.")
+        joint = participant_labels([self.lead_id, *self.advisor_ids])
+        lead_label, advisor_labels = joint[0], joint[1:]
+        cycle_task = task if task is not None else self.task
         context = self.context or build_repo_context(
-            self.project_path, self.task, max_total_chars=self.context_budget
+            self.project_path, cycle_task, max_total_chars=self.context_budget
         )
-        print(f"Contexto: {len(context)} caracteres del repositorio.")
         result = run_lead_debate(
             lead,
             advisor_providers,
-            task=self.task,
+            task=cycle_task,
             context=context,
             mode=self.mode,
             max_rounds=self.max_rounds,
-            verbose=True,
+            verbose=verbose,
             interactive=self.interactive,
+            project_path=self.project_path,
+            lead_label=lead_label,
+            advisor_labels=advisor_labels,
         )
+        labels = {"lead": lead_label, "advisors": advisor_labels}
+        return result, lead, advisor_providers, labels, context
+
+    def run(self) -> int:
+        try:
+            result, lead, advisor_providers, labels, context = self.run_cycle()
+        except (ProviderError, ValueError) as e:
+            print(f"[ERROR] {e}")
+            return 2 if "asesor" in str(e) else 1
+        lead_label, advisor_labels = labels["lead"], labels["advisors"]
+        print(f"Contexto: {len(context)} caracteres del repositorio.")
+        print(f"Mesa: líder {lead_label} + {', '.join(advisor_labels)}")
         print("=" * 65)
         print(
             f"Consenso: {result.consensus_reached} | "
             f"Rondas: {result.rounds_used} | Líder: {result.writer}"
         )
+        if result.files_declared:
+            print(f"Archivos: {', '.join(result.files_declared)}")
         print("=" * 65)
         if self.mode == "build":
-            def repair(prompt, _lead=lead):
+            def repair(prompt, _lead=lead, _lab=lead_label):
                 return _lead.chat([
                     {"role": "system", "content": (
-                        f"Eres {lead.model_id}. Corriges el diff como líder, "
+                        f"Eres {_lab}. Corriges el diff como líder, "
                         "sin añadir decisiones nuevas.")},
                     {"role": "user", "content": prompt},
                 ])
+            repair_context = result.base_context or context
             return finish_build_output(
-                self.project_path, self.task, result.final_output, context, repair
+                self.project_path, self.task, result.final_output, repair_context, repair
             )
         print(result.final_output)
         return 0 if result.final_output else 1

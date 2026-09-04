@@ -115,6 +115,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Presupuesto de caracteres del mapa de contexto (por defecto: 12000). "
         "Bájalo si tu tier limita tokens por minuto.",
     )
+    common_group.add_argument(
+        "--max-cycles",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Ciclos máximos de cascada condicional solo en modo build (por defecto: 1).\n"
+        "  1: clásico, un debate + un commit sin micro-auditoría.\n"
+        "  >1: tras cada commit, micro-auditoría barata; solo se expande con NUEVO_HALLAZGO.\n"
+        "  Tope de seguridad, no meta.",
+    )
+    common_group.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-aprueba commits de la cascada sin preguntar (útil en CI).\n"
+        "Sin --yes y en interactivo se pide consentimiento por ciclo.",
+    )
+    common_group.add_argument(
+        "--push",
+        action="store_true",
+        help="Push explícito de la rama consensus a origin al terminar (por defecto: no).\n"
+        "El texto de la tarea nunca dispara push por sí solo.",
+    )
 
 
     return parser
@@ -140,6 +162,12 @@ def validate_and_infer_topology(
         raise ValueError("--max-rounds debe ser un entero mayor o igual a 1.")
     if args.context_budget < 1000:
         raise ValueError("--context-budget debe ser un entero mayor o igual a 1000.")
+    if args.max_cycles < 1:
+        raise ValueError("--max-cycles debe ser un entero mayor o igual a 1.")
+    if args.push and args.mode != "build":
+        raise ValueError("--push solo tiene sentido en modo build (plan/ask no tocan Git).")
+    if args.max_cycles > 1 and args.mode != "build":
+        raise ValueError("--max-cycles > 1 solo aplica en modo build (sin disco no hay cascada).")
 
     has_peer = bool(args.models)
     has_lead = bool(args.lead or args.advisors)
@@ -218,9 +246,14 @@ def print_banner(topology: str, args: argparse.Namespace) -> None:
     print(f"Tarea:       {args.task}")
     print(f"Proyecto:    {args.path.resolve()}")
     print(f"Rondas max:  {args.max_rounds}")
+    print(f"Ciclos max:  {args.max_cycles}")
+    print(f"Push:        {'sí (--push)' if args.push else 'no'}")
     print(f"Interactivo: {'no (--non-interactive)' if args.non_interactive else 'sí'}")
+    if not args.yes and not args.non_interactive and args.max_cycles > 1:
+        print("Consenso Git:  se pedirá confirmación por ciclo (usa --yes para auto-aprobar)")
 
     if topology == "peer":
+        labels = participant_labels(args.models)
         writer_label = (
             f"{args.writer} (fijado)"
             if args.writer
@@ -269,6 +302,8 @@ def main() -> int:
             interactive=not args.non_interactive,
             context_budget=args.context_budget,
         )
+        if args.mode == "build" and args.max_cycles > 1:
+            return _run_macro_peer(engine, args)
         return engine.run()
 
     elif topology == "lead":
@@ -282,9 +317,103 @@ def main() -> int:
             interactive=not args.non_interactive,
             context_budget=args.context_budget,
         )
+        if args.mode == "build" and args.max_cycles > 1:
+            return _run_macro_lead(engine, args)
         return engine.run()
 
     return 0
+
+
+def _run_macro_peer(engine, args) -> int:
+    from macro_engine import CycleBundle, MacroEngine
+
+    def cycle_fn(task: str) -> CycleBundle:
+        result, providers, labels, context = engine.run_cycle(task, verbose=True)
+        by_label = dict(zip(labels, providers))
+        wp = by_label.get(result.writer, providers[-1])
+        wl = result.writer
+
+        def audit_chat(prompt, _wp=wp, _wl=wl):
+            return _wp.chat([
+                {"role": "system", "content": (
+                    f"Eres {_wl}. Auditor post-ciclo: solo estado, sin código.")},
+                {"role": "user", "content": prompt},
+            ])
+
+        def repair_chat(prompt, _wp=wp, _wl=wl):
+            return _wp.chat([
+                {"role": "system", "content": (
+                    f"Eres {_wl}. Corriges el diff como redactor, "
+                    "sin añadir decisiones nuevas.")},
+                {"role": "user", "content": prompt},
+            ])
+
+        return CycleBundle(
+            result=result,
+            diff=result.final_output or "",
+            files=list(result.files_declared or []),
+            writer_label=wl,
+            repair_context=result.base_context or context,
+            audit_chat=audit_chat,
+            repair_chat=repair_chat,
+        )
+
+    macro = MacroEngine(
+        project_path=args.path,
+        initial_task=args.task,
+        max_cycles=args.max_cycles,
+        cycle_fn=cycle_fn,
+        interactive=not args.non_interactive,
+        auto_approve=args.yes,
+        push=args.push,
+    )
+    rc, _ = macro.run()
+    return rc
+
+
+def _run_macro_lead(engine, args) -> int:
+    from macro_engine import CycleBundle, MacroEngine
+
+    def cycle_fn(task: str) -> CycleBundle:
+        result, lead, _advisors, labels, context = engine.run_cycle(task, verbose=True)
+        lead_label = labels["lead"] if isinstance(labels, dict) else result.writer
+
+        def audit_chat(prompt, _lead=lead, _lab=lead_label):
+            return _lead.chat([
+                {"role": "system", "content": (
+                    f"Eres {_lab}. Auditor post-ciclo: solo estado, sin código.")},
+                {"role": "user", "content": prompt},
+            ])
+
+        def repair_chat(prompt, _lead=lead, _lab=lead_label):
+            return _lead.chat([
+                {"role": "system", "content": (
+                    f"Eres {_lab}. Corriges el diff como líder, "
+                    "sin añadir decisiones nuevas.")},
+                {"role": "user", "content": prompt},
+            ])
+
+        return CycleBundle(
+            result=result,
+            diff=result.final_output or "",
+            files=list(result.files_declared or []),
+            writer_label=lead_label,
+            repair_context=result.base_context or context,
+            audit_chat=audit_chat,
+            repair_chat=repair_chat,
+        )
+
+    macro = MacroEngine(
+        project_path=args.path,
+        initial_task=args.task,
+        max_cycles=args.max_cycles,
+        cycle_fn=cycle_fn,
+        interactive=not args.non_interactive,
+        auto_approve=args.yes,
+        push=args.push,
+    )
+    rc, _ = macro.run()
+    return rc
 
 
 if __name__ == "__main__":

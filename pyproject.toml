@@ -40,6 +40,7 @@ py-modules = [
     "cli",
     "orchestrator",
     "lead_engine",
+    "macro_engine",
     "providers",
     "context",
     "git_bridge",

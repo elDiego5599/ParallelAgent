@@ -623,37 +623,66 @@ class PeerEngine:
         self.context_budget = context_budget
         self.interactive = interactive
 
-    def run(self) -> int:
+    def run_cycle(self, task: Optional[str] = None, verbose: bool = True):
+        """Un ciclo de deliberación SIN efectos Git. Devuelve (result, providers, labels, context).
+
+        La macro-cascada lo llama una vez por ciclo con la tarea vigente
+        (inicial o hallazgo). El contexto se reconstruye del disco para ver
+        los commits previos. Nunca commitea ni pregunta Git.
+        """
         warn_unknown_models(self.models)
-        try:
-            providers = [resolve_provider(m) for m in self.models]
-        except ProviderError as e:
-            print(f"[ERROR] {e}")
-            return 1
+        providers, labels = resolve_participants(self.models)
+        writer_label = self.writer
+        if self.writer is not None and self.writer not in labels:
+            w_api, w_alias = parse_model_spec(self.writer)
+            candidates = []
+            for lab, spec in zip(labels, self.models):
+                api, alias = parse_model_spec(spec)
+                if self.writer in (spec, lab, api) or (w_alias and w_alias == alias):
+                    candidates.append(lab)
+            if candidates:
+                writer_label = candidates[0]
+            elif w_api in [parse_model_spec(s)[0] for s in self.models]:
+                idx = [parse_model_spec(s)[0] for s in self.models].index(w_api)
+                writer_label = labels[idx]
+        cycle_task = task if task is not None else self.task
         context = self.context or build_repo_context(
-            self.project_path, self.task, max_total_chars=self.context_budget
+            self.project_path, cycle_task, max_total_chars=self.context_budget
         )
-        print(f"Contexto: {len(context)} caracteres del repositorio.")
         result = run_debate(
             providers,
-            task=self.task,
+            task=cycle_task,
             context=context,
             mode=self.mode,
             max_rounds=self.max_rounds,
             quorum=self.quorum,
-            writer=self.writer,
-            verbose=True,
+            writer=writer_label,
+            verbose=verbose,
             interactive=self.interactive,
+            project_path=self.project_path,
+            labels=labels,
         )
+        return result, providers, labels, context
+
+    def run(self) -> int:
+        try:
+            result, providers, labels, context = self.run_cycle()
+        except ProviderError as e:
+            print(f"[ERROR] {e}")
+            return 1
+        print(f"Contexto: {len(context)} caracteres del repositorio.")
+        print(f"Mesa: {', '.join(labels)}")
         print("=" * 65)
         print(
             f"Consenso: {result.consensus_reached} | "
             f"Rondas: {result.rounds_used} | Redactor: {result.writer}"
         )
+        if result.files_declared:
+            print(f"Archivos: {', '.join(result.files_declared)}")
         print("=" * 65)
         if self.mode == "build":
-            by_id = {p.model_id: p for p in providers}
-            writer_provider = by_id.get(result.writer)
+            by_label = dict(zip(labels, providers))
+            writer_provider = by_label.get(result.writer)
             repair = None
             if writer_provider is not None:
                 def repair(prompt, _wp=writer_provider, _w=result.writer):
