@@ -12,6 +12,7 @@ from typing import Literal
 
 from orchestrator import PeerEngine
 from lead_engine import LeadEngine
+from providers import parse_model_spec, participant_labels, strip_alias
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,7 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         metavar="MODEL",
         help="Lista de modelos en igualdad de condiciones (mínimo 2).\n"
-        "Ej: --models claude-3-7-sonnet gpt-4o deepseek-r1",
+        "Ej: --models claude-3-7-sonnet gpt-4o deepseek-r1\n"
+        "Gemelos: --models opus opus (auto: 'opus (1)', 'opus (2)')\n"
+        "Alias: --models opus=arquitecto opus=auditor",
     )
     peer_group.add_argument(
         "--writer",
@@ -50,7 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="MODEL",
         help="Modelo encargado de transcribir el diff final (solo modo peer).\n"
-        "Debe pertenecer a --models. Por defecto: último en hablar.",
+        "Acepta spec, alias o slug: 'opus=arquitecto', 'arquitecto' u 'opus'. "
+        "Por defecto: último en hablar.",
     )
 
     # Topología LEAD
@@ -61,14 +65,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--lead",
         type=str,
         metavar="MODEL",
-        help="Modelo líder que propone, refina y emite el código.",
+        help="Modelo líder que propone, refina y emite el código.\n"
+        "Acepta alias: --lead opus=líder",
     )
     lead_group.add_argument(
         "--advisors",
         nargs="+",
         metavar="MODEL",
         help="Modelos revisores que auditan, objetan o vetan (mínimo 1).\n"
-        "Ej: --advisors gpt-4o deepseek-r1",
+        "Ej: --advisors gpt-4o deepseek-r1\n"
+        "Gemelos: --advisors opus opus (auto-desambiguados)",
     )
 
     # Opciones de ejecución comunes
@@ -158,10 +164,22 @@ def validate_and_infer_topology(
                 "La topología peer requiere al menos 2 modelos para deliberar (--models M1 M2)."
             )
 
-        if args.writer and args.writer not in args.models:
-            raise ValueError(
-                f"El redactor indicado (--writer '{args.writer}') no forma parte de la mesa: {args.models}"
+        if args.writer:
+            labels = participant_labels(args.models)
+            apis = [strip_alias(m) for m in args.models]
+            specs = list(args.models)
+            w_api, w_alias = parse_model_spec(args.writer)
+            ok = (
+                args.writer in specs
+                or args.writer in labels
+                or args.writer in apis
+                or (w_alias and w_alias in labels)
+                or (w_api in apis)
             )
+            if not ok:
+                raise ValueError(
+                    f"El redactor indicado (--writer '{args.writer}') no forma parte de la mesa: {args.models}"
+                )
 
         return "peer"
 
@@ -178,9 +196,11 @@ def validate_and_infer_topology(
                 f"El redactor es siempre y exclusivamente el líder ('{args.lead}')."
             )
 
-        if args.lead in args.advisors:
+        lead_api = strip_alias(args.lead)
+        advisor_apis = [strip_alias(a) for a in args.advisors]
+        if lead_api in advisor_apis:
             raise ValueError(
-                f"Conflicto de roles: el modelo '{args.lead}' no puede ser líder y asesor a la vez."
+                f"Conflicto de roles: el modelo '{lead_api}' no puede ser líder y asesor a la vez."
             )
 
         return "lead"
@@ -209,13 +229,18 @@ def print_banner(topology: str, args: argparse.Namespace) -> None:
         print(f"Quorum:      {args.quorum}")
         print(f"Redactor:    {writer_label}")
         print("Participantes:")
-        for m in args.models:
-            print(f"    - {m}")
+        for spec, lab in zip(args.models, labels):
+            api, alias = parse_model_spec(spec)
+            extra = f" [slug API: {api}]" if alias else ""
+            print(f"    - {lab}{extra}")
     else:
-        print(f"Lider (Tech Lead): {args.lead}")
+        lead_labels = participant_labels([args.lead, *args.advisors])
+        print(f"Lider (Tech Lead): {lead_labels[0]}")
         print("Asesores (Reviewers):")
-        for a in args.advisors:
-            print(f"    - {a}")
+        for lab, spec in zip(lead_labels[1:], args.advisors):
+            api, alias = parse_model_spec(spec)
+            extra = f" [slug API: {api}]" if alias else ""
+            print(f"    - {lab}{extra}")
     print("=" * 65 + "\n")
 
 
