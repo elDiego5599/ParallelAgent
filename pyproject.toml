@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "parallel-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Sistema local de deliberación multi-modelo para tareas de programación."
 readme = "README.md"
 requires-python = ">=3.10"
