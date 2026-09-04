@@ -19,8 +19,16 @@ from orchestrator import (
     _resolve_question,
     build_emission_prompt,
     finish_build_output,
+    resolve_multifile_context,
 )
-from providers import BaseProvider, ProviderError, resolve_provider, warn_unknown_models
+from providers import (
+    BaseProvider,
+    ProviderError,
+    parse_model_spec,
+    participant_labels,
+    resolve_provider,
+    warn_unknown_models,
+)
 
 
 CONFORME = "CONFORME"
@@ -126,22 +134,31 @@ def run_lead_debate(
     interactive: bool = True,
     ask_user: Optional[Callable[[str, str], str]] = None,
     max_questions: int = 3,
+    project_path: Optional[Path] = None,
+    enable_multifile: bool = True,
+    lead_label: Optional[str] = None,
+    advisor_labels: Optional[List[str]] = None,
 ) -> DebateResult:
     if not advisors:
         raise ValueError("Se requiere al menos 1 asesor.")
     if mode not in ("build", "plan", "ask"):
         raise ValueError(f"Modo desconocido: {mode}")
 
-    advisor_ids = [a.model_id for a in advisors]
-    result = DebateResult(task=task, mode=mode, writer=lead.model_id)
+    all_specs = [lead.model_id] + [a.model_id for a in advisors]
+    joint = participant_labels(all_specs)
+    if not lead_label:
+        lead_label = joint[0]
+    if advisor_labels is None or len(advisor_labels) != len(advisors):
+        advisor_labels = joint[1:]
+    result = DebateResult(task=task, mode=mode, writer=lead_label)
     questions_asked = 0
     pending_objections: List[str] = []
     vetoed = False
 
-    lead_system = build_lead_system_prompt(lead.model_id, advisor_ids, task, mode)
+    lead_system = build_lead_system_prompt(lead_label, advisor_labels, task, mode)
     advisor_systems: Dict[str, str] = {
-        a.model_id: build_advisor_system_prompt(a.model_id, lead.model_id, task)
-        for a in advisors
+        lab: build_advisor_system_prompt(lab, lead_label, task)
+        for lab in advisor_labels
     }
 
     def say(model: str, text: str, estado: str, round_num: int) -> None:
@@ -168,27 +185,28 @@ def run_lead_debate(
         except ProviderError as e:
             lead_text = f"Error de proveedor: {e}\n\nESTADO: DEBATIENDO"
         lead_estado = parse_lead_estado(lead_text)
-        say(lead.model_id, lead_text, DEBATING, round_num)
+        say(lead_label, lead_text, DEBATING, round_num)
         if lead_estado == QUESTION:
-            maybe_ask(lead.model_id, lead_text, round_num)
+            maybe_ask(lead_label, lead_text, round_num)
 
         advisor_estados: List[str] = []
         pending_objections = []
-        for advisor in advisors:
+        for idx, advisor in enumerate(advisors):
+            lab = advisor_labels[idx]
             try:
                 text = advisor.chat([
-                    {"role": "system", "content": advisor_systems[advisor.model_id]},
+                    {"role": "system", "content": advisor_systems[lab]},
                     {"role": "user", "content": build_advisor_turn_prompt(task, lead_text, round_num)},
                 ])
             except ProviderError as e:
                 text = f"Error de proveedor: {e}\n\nESTADO: DEBATIENDO"
             estado = parse_lead_estado(text)
-            say(advisor.model_id, text, estado, round_num)
+            say(lab, text, estado, round_num)
             if estado == QUESTION:
-                maybe_ask(advisor.model_id, text, round_num)
+                maybe_ask(lab, text, round_num)
                 estado = DEBATING
             if estado == OBJECTION:
-                pending_objections.append(f"{advisor.model_id}: {text[:500]}")
+                pending_objections.append(f"{lab}: {text[:500]}")
             advisor_estados.append(estado)
 
         result.rounds_used = round_num
@@ -210,16 +228,28 @@ def run_lead_debate(
         if round_num >= max_rounds:
             break
 
+    emission = None
+    declared: List[str] = []
+    base_files = ""
+    if mode == "build" and enable_multifile:
+        declared, base_files = resolve_multifile_context(
+            lead, task, result.transcript, project_path, verbose=False,
+            display_name=lead_label,
+        )
+        result.files_declared = declared
+        result.base_context = base_files
+        if verbose and declared:
+            print(f"[MULTIFILE] {lead_label} declara {len(declared)} archivo(s).")
     emission = [
         {"role": "system", "content": (
-            f"Eres {lead.model_id}. Redactas el resultado final como líder, "
+            f"Eres {lead_label}. Redactas el resultado final como líder, "
             f"respetando lo acordado. Modo: {mode}.")},
-        {"role": "user", "content": build_emission_prompt(task, result.transcript, mode, context)},
+        {"role": "user", "content": build_emission_prompt(task, result.transcript, mode, context, base_files)},
     ]
     try:
         result.final_output = lead.chat(emission)
     except ProviderError as e:
-        result.final_output = f"Error en emisión ({lead.model_id}): {e}"
+        result.final_output = f"Error en emisión ({lead_label}): {e}"
 
     return result
 

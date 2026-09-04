@@ -199,16 +199,83 @@ class PollinationsProvider(OpenAICompatibleProvider):
         super().__init__(model_id=model_id, api_key=key)
 
 
+def _is_mock_spec(spec: str) -> bool:
+    s = (spec or "").strip()
+    return s == "mock" or s.startswith(("mock:", "mock/"))
+
+
+def parse_model_spec(spec: str) -> tuple:
+    """Separa `spec` en (api_id, alias|None).
+
+    Sintaxis:
+      - 'opus=arquitecto' -> ('opus', 'arquitecto')
+      - 'opus:auditor'    -> ('opus', 'auditor') (solo no-mock)
+      - 'mock', 'mock:2', 'mock:3:llama' -> (spec, None) sin partir
+      - 'groq/llama=rapido' -> ('groq/llama', 'rapido')
+    El alias permite distinguir gemelos en el transcript sin contaminar
+    el slug que se envía a la API.
+    """
+    s = (spec or "").strip()
+    if not s:
+        return s, None
+    if _is_mock_spec(s):
+        return s, None
+    if "=" in s:
+        api, alias = s.split("=", 1)
+        api, alias = api.strip(), alias.strip()
+        if api and alias:
+            return api, alias
+        return s, None
+    if ":" in s:
+        api, alias = s.rsplit(":", 1)
+        api, alias = api.strip(), alias.strip()
+        if api and alias and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_\-]*", alias):
+            return api, alias
+        return s, None
+    return s, None
+
+
+def strip_alias(spec: str) -> str:
+    """Devuelve el slug real para la API, sin alias de sala."""
+    api, _ = parse_model_spec(spec)
+    return api
+
+
+def participant_labels(specs: List[str]) -> List[str]:
+    """Etiquetas únicas para el transcript: alias si hay, si no el api_id.
+
+    Los duplicados se sufijan como 'opus (1)', 'opus (2)' para romper el
+    efecto espejo (mismo nombre dos veces = confusión de identidad).
+    Sin duplicados devuelve los nombres tal cual (compat total).
+    """
+    bases: List[str] = []
+    for spec in specs or []:
+        api, alias = parse_model_spec(spec)
+        bases.append(alias if alias else api)
+    from collections import Counter
+    counts = Counter(bases)
+    seen: Dict[str, int] = {}
+    out: List[str] = []
+    for b in bases:
+        if counts[b] < 2:
+            out.append(b)
+        else:
+            seen[b] = seen.get(b, 0) + 1
+            out.append(f"{b} ({seen[b]})")
+    return out
+
+
 def resolve_provider(model_identifier: str) -> BaseProvider:
     """Fábrica para instanciar el proveedor correcto según el identificador.
 
-    Formatos soportados:
+    Acepta specs con alias ('opus=arquitecto'): el alias se pela y solo
+    el slug real viaja a la API. Formatos soportados:
       - 'mock', 'mock:2', 'mock:3:llama' -> MockProvider
       - 'groq/<model>'                  -> GroqProvider
       - 'openrouter/<model>'            -> OpenRouterProvider
       - '<model>' sin prefijo           -> PollinationsProvider (default sin keys)
     """
-    model_identifier = model_identifier.strip()
+    model_identifier = strip_alias(model_identifier.strip())
 
     if model_identifier == "mock" or model_identifier.startswith(
         ("mock:", "mock/")
@@ -242,7 +309,7 @@ _CATALOG_CACHE: Dict[str, Any] = {}
 
 
 def _split_provider(model_identifier: str) -> tuple:
-    mid = model_identifier.strip()
+    mid = strip_alias(model_identifier.strip())
     for prefix in ("groq/", "openrouter/"):
         if mid.startswith(prefix):
             return prefix[:-1], mid[len(prefix):]
