@@ -24,6 +24,11 @@ from providers import (
 HUMAN = "HUMANO / TECH LEAD"
 SYSTEM = "SISTEMA"
 
+# Tope del ledger anti-amnesia: bastan las últimas decisiones para que la
+# ventana deslizante no haga reabrir debates saldados. ~1 línea c/u.
+MAX_ACUERDOS = 8
+MAX_ACUERDO_CHARS = 160
+
 
 CONSENSUS = "CONSENSO_ALCANZADO"
 DEBATING = "DEBATIENDO"
@@ -62,6 +67,7 @@ class DebateResult:
     writer: str = ""
     files_declared: List[str] = field(default_factory=list)
     base_context: str = ""
+    acuerdos: List[str] = field(default_factory=list)
 
 
 def build_system_prompt(model_id: str, peers: List[str], task: str, mode: str) -> str:
@@ -99,10 +105,17 @@ def build_turn_prompt(
     transcript: List[Turn],
     round_num: int,
     mode: str,
+    acuerdos: Optional[List[str]] = None,
 ) -> str:
     lines = [f"[Ronda {round_num}]", f"Tarea: {task}", f"Modo: {mode}"]
     if context:
         lines.append(f"Contexto del repositorio:\n{context}")
+    if acuerdos:
+        recent = acuerdos[-MAX_ACUERDOS:]
+        lines.append(
+            "ACUERDOS_PREVIOS (decisiones ya saldadas; no reabrir sin motivo nuevo):\n"
+            + "\n".join(f"- {a}" for a in recent)
+        )
     if transcript:
         lines.append("Transcripción hasta ahora (ventana deslizante):")
         windowed, omitted = _window_transcript(transcript, round_num)
@@ -379,30 +392,51 @@ def _resolve_question(
     max_questions: int,
     verbose: bool,
 ) -> None:
-    """Pausa la sala, consigue la aclaración y la inyecta al transcript."""
+    """Pausa la sala, consigue la aclaración y la inyecta al transcript + ledger."""
+    question = _extract_question(text)
     if questions_asked >= max_questions:
         note = "Límite de preguntas alcanzado. Continúen con la alternativa más conservadora."
         source = SYSTEM
+        record_acuerdo(result, f"R{round_num}: tope de preguntas; vía conservadora acordada.")
     elif interactive:
         handler = ask_user or default_ask_user
-        answer = handler(model, _extract_question(text))
+        answer = handler(model, question)
         if not answer.strip():
             note = "Sin respuesta. Asuman la alternativa más conservadora y continúen."
             source = SYSTEM
+            record_acuerdo(result, f"R{round_num} {model} sin respuesta; vía conservadora acordada.")
         else:
             note = answer
             source = HUMAN
+            record_acuerdo(result, f"R{round_num} {model} preguntó '{_short(question, 80)}' → humano: '{_short(note, 80)}'.")
     else:
         note = (
             "El usuario no está disponible (modo no interactivo). "
             "Asuman la alternativa más conservadora y continúen."
         )
         source = SYSTEM
+        record_acuerdo(result, f"R{round_num} {model} sin usuario (no interactivo); vía conservadora acordada.")
     result.transcript.append(
         Turn(round=round_num, model=source, text=note, estado=DEBATING)
     )
     if verbose:
         print(f"\n[{source} -> mesa]\n{note}\n")
+
+
+def _short(s: str, n: int = MAX_ACUERDO_CHARS) -> str:
+    s = " ".join((s or "").split())
+    return s[:n] + ("…" if len(s) > n else "")
+
+
+def record_acuerdo(result: DebateResult, entry: str) -> None:
+    """Agrega una línea al ledger anti-amnesia (con tope, sin duplicados seguidos)."""
+    entry = _short(entry)
+    if not entry:
+        return
+    if result.acuerdos and result.acuerdos[-1] == entry:
+        return
+    result.acuerdos.append(entry)
+    del result.acuerdos[:-MAX_ACUERDOS]
 
 
 def run_debate(
@@ -449,7 +483,7 @@ def run_debate(
                 },
                 {
                     "role": "user",
-                    "content": build_turn_prompt(task, context, result.transcript, round_num, mode),
+                    "content": build_turn_prompt(task, context, result.transcript, round_num, mode, result.acuerdos),
                 },
             ]
             try:
