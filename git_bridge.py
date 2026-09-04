@@ -82,6 +82,27 @@ def check_clean_working_tree(path: Path) -> None:
         )
 
 
+def _apply_checked(path: Path, diff_str: str) -> None:
+    """Aplica con --recount (corrige hunks mal contados); fallback sin él.
+
+    `--recount` rompe parches multi-archivo sin cabeceras `diff --git`
+    (los confunde con contexto), mientras que el apply plano falla ante
+    conteos tipo `@@ -1,9`. Probar ambos cubre los dos estilos de LLM.
+    """
+    try:
+        _run_git(path, "apply", "--recount", "--check", input_text=diff_str)
+        _run_git(path, "apply", "--recount", input_text=diff_str)
+        return
+    except GitBridgeError as recount_err:
+        try:
+            _run_git(path, "apply", "--check", input_text=diff_str)
+            _run_git(path, "apply", input_text=diff_str)
+            return
+        except GitBridgeError:
+            # Prioriza el error con --recount (más informativo para self-healing)
+            raise recount_err
+
+
 def slugify_task(task: str, max_words: int = 5) -> str:
     words = re.sub(r"[^a-zA-Z0-9áéíóúñü ]", "", task.lower()).split()
     slug = "-".join(words[:max_words]) or "tarea"
@@ -126,8 +147,7 @@ def apply_consensus_to_branch(
     try:
         _run_git(path, "checkout", "-b", branch)
         created = True
-        _run_git(path, "apply", "--recount", "--check", input_text=diff_str)
-        _run_git(path, "apply", "--recount", input_text=diff_str)
+        _apply_checked(path, diff_str)
         _run_git(path, "add", "-A")
         _run_git(
             path, "commit", "-m", commit_message or f"consensus: {task[:72]}"

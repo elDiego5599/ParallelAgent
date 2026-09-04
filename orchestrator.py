@@ -53,6 +53,8 @@ class DebateResult:
     rounds_used: int = 0
     final_output: str = ""
     writer: str = ""
+    files_declared: List[str] = field(default_factory=list)
+    base_context: str = ""
 
 
 def build_system_prompt(model_id: str, peers: List[str], task: str, mode: str) -> str:
@@ -113,7 +115,13 @@ def build_turn_prompt(
     return "\n\n".join(lines)
 
 
-def build_emission_prompt(task: str, transcript: List[Turn], mode: str, context: str = "") -> str:
+def build_emission_prompt(
+    task: str,
+    transcript: List[Turn],
+    mode: str,
+    context: str = "",
+    base_files: str = "",
+) -> str:
     body = "\n\n".join(f"[{t.model}]:\n{t.text}" for t in transcript)
     if mode == "plan":
         instruction = (
@@ -213,6 +221,9 @@ def run_debate(
     interactive: bool = True,
     ask_user: Optional[Callable[[str, str], str]] = None,
     max_questions: int = 3,
+    project_path: Optional[Path] = None,
+    enable_multifile: bool = True,
+    labels: Optional[List[str]] = None,
 ) -> DebateResult:
     if len(providers) < 2:
         raise ValueError("Se requieren al menos 2 modelos en la mesa.")
@@ -281,7 +292,7 @@ def run_debate(
         },
         {
             "role": "user",
-            "content": build_emission_prompt(task, result.transcript, mode, context),
+            "content": build_emission_prompt(task, result.transcript, mode, context, base_files),
         },
     ]
     try:
@@ -429,8 +440,9 @@ class PeerEngine:
                             "sin añadir decisiones nuevas.")},
                         {"role": "user", "content": prompt},
                     ])
+            repair_context = result.base_context or context
             return finish_build_output(
-                self.project_path, self.task, result.final_output, context, repair
+                self.project_path, self.task, result.final_output, repair_context, repair
             )
         print(result.final_output)
         return 0 if result.final_output else 1
