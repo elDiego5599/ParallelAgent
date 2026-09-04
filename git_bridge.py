@@ -1,8 +1,11 @@
 """Puente con Git para ParallelAgent.
 
-Aplica el parche acordado sobre una rama efímera de forma transaccional:
-si el diff falla, vuelve a la rama original y borra la temporal.
-Solo se usa en modo build. Nunca escribe sobre la rama en curso.
+Ciclo clásico (`apply_consensus_to_branch`): rama efímera transaccional,
+si el diff falla vuelve al origen y borra la temporal.
+Macro-cascada (`begin_consensus_branch` + `commit_diff_to_branch`): una
+misma rama acumula N commits, un fallo en el ciclo N preserva los
+commits 1..N-1. Solo modo build. Nunca escribe sobre la rama en curso
+y nunca hace push salvo `push_branch` explícito (--push).
 """
 
 from datetime import datetime
@@ -103,6 +106,125 @@ def _apply_checked(path: Path, diff_str: str) -> None:
             raise recount_err
 
 
+def diff_summary(diff_str: str) -> str:
+    """Resumen humano del diff para pedir consentimiento antes de commitear.
+
+    No toca Git: parsea cabeceras `diff --git`/`--- a/` y cuenta +/-
+    (excluye cabeceras). Ej: '2 archivos, +12/-3: lib/a.dart, ...'.
+    """
+    clean = _extract_diff(diff_str)
+    if not clean.strip():
+        return "diff vacío"
+    files: list = []
+    added = removed = 0
+    for line in clean.splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split(" b/")
+            if len(parts) == 2:
+                f = parts[1].strip()
+                if f not in files:
+                    files.append(f)
+        elif line.startswith("--- a/"):
+            f = line[6:].strip()
+            if f not in files:
+                files.append(f)
+        elif line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    if not files:
+        return f"+{added}/-{removed} (archivos sin cabecera reconocible)"
+    shown = ", ".join(files[:6])
+    extra = f" +{len(files) - 6} más" if len(files) > 6 else ""
+    return f"{len(files)} archivo(s), +{added}/-{removed}: {shown}{extra}"
+
+
+def begin_consensus_branch(path: Path, task: str) -> dict:
+    """Crea la rama acumulativa de la macro-cascada (sin commitear nada).
+
+    Exige árbol limpio. Vuelve a la rama original. El branch queda
+    apuntando al HEAD actual; los ciclos harán commits encima.
+    """
+    if not path.is_dir():
+        raise GitBridgeError(f"La ruta no es un directorio válido: {path}")
+    if not is_git_repo(path):
+        raise GitBridgeError(
+            f"La ruta no es un repositorio Git: {path}. "
+            "Inicialízalo con git init o apunta --path a uno válido."
+        )
+    check_clean_working_tree(path)
+    original = current_branch(path)
+    branch = build_branch_name(task)
+    try:
+        _run_git(path, "checkout", "-b", branch)
+    except GitBridgeError:
+        raise
+    try:
+        _run_git(path, "checkout", original)
+    except GitBridgeError as e:
+        print(f"[AVISO] No se pudo volver a '{original}': {e}. Quedaste en '{branch}'.")
+    return {"original_branch": original, "branch": branch}
+
+
+def commit_diff_to_branch(
+    path: Path,
+    branch: str,
+    original: str,
+    task: str,
+    diff_str: str,
+    cycle: int = 1,
+    commit_message: str | None = None,
+) -> dict:
+    """Aplica un diff y commitea sobre la rama acumulativa existente.
+
+    A diferencia del ciclo clásico, ante fallo NO borra la rama: preserva
+    los commits de ciclos previos y vuelve a `original`. `original` es la
+    rama previa a la macro (no cambia entre ciclos).
+    """
+    diff_str = _extract_diff(diff_str)
+    if not diff_str:
+        raise GitBridgeError("Diff vacío: nada que aplicar.")
+    try:
+        _run_git(path, "checkout", branch)
+        _apply_checked(path, diff_str)
+        _run_git(path, "add", "-A")
+        _run_git(
+            path, "commit", "-m",
+            commit_message or f"consensus(c{cycle}): {task[:72]}",
+        )
+    except GitBridgeError:
+        try:
+            _run_git(path, "checkout", original)
+        except GitBridgeError:
+            pass
+        raise
+    try:
+        _run_git(path, "checkout", original)
+    except GitBridgeError as e:
+        print(f"[AVISO] No se pudo volver a '{original}': {e}. Quedaste en '{branch}'.")
+    return {"branch": branch, "cycle": cycle}
+
+
+def push_branch(path: Path, branch: str, remote: str = "origin") -> str:
+    """Push explícito de la rama consensus. Solo bajo --push del usuario.
+
+    El texto de la tarea ('pushea esto') NUNCA dispara push: solo este
+    llamado con flag explícito. Devuelve la salida de git push.
+    """
+    return _run_git(path, "push", "-u", remote, branch)
+
+
+def delete_branch(path: Path, branch: str) -> None:
+    """Borra una rama acumulativa vacía (0 commits por declinar usuario).
+
+    Nunca lanza: es limpieza best-effort.
+    """
+    try:
+        _run_git(path, "branch", "-D", branch)
+    except GitBridgeError:
+        pass
+
+
 def slugify_task(task: str, max_words: int = 5) -> str:
     words = re.sub(r"[^a-zA-Z0-9áéíóúñü ]", "", task.lower()).split()
     slug = "-".join(words[:max_words]) or "tarea"
@@ -120,7 +242,7 @@ def apply_consensus_to_branch(
     diff_str: str,
     commit_message: str | None = None,
 ) -> dict:
-    """Valida el repo, crea rama efímera, aplica el diff y hace commit.
+    """Valida el repo, exige árbol limpio, crea rama efímera, aplica y commitea.
 
     Devuelve dict con rama original, rama creada e instrucciones de revisión.
     Ante cualquier fallo, restaura la rama original y borra la temporal.
