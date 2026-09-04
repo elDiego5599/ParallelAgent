@@ -12,13 +12,16 @@ from typing import Callable, Dict, List, Optional
 from context import build_repo_context
 from orchestrator import (
     DEBATING,
+    MAX_ACUERDOS,
     QUESTION,
     SYSTEM,
     DebateResult,
     Turn,
     _resolve_question,
+    _short,
     build_emission_prompt,
     finish_build_output,
+    record_acuerdo,
     resolve_multifile_context,
 )
 from providers import (
@@ -90,10 +93,16 @@ def build_lead_turn_prompt(
     round_num: int,
     objections: List[str],
     vetoed: bool,
+    acuerdos: Optional[List[str]] = None,
 ) -> str:
     lines = [f"[Ronda {round_num}] [LÍDER]", f"Tarea: {task}"]
     if context and round_num == 1:
         lines.append(f"Contexto del repositorio:\n{context}")
+    if acuerdos:
+        lines.append(
+            "ACUERDOS_PREVIOS (objeciones ya resueltas; no reabrir sin motivo nuevo):\n"
+            + "\n".join(f"- {a}" for a in acuerdos[-MAX_ACUERDOS:])
+        )
     if vetoed:
         lines.append(
             "Tu premisa fue VETADA POR UNANIMIDAD. Replantea el diseño desde cero, "
@@ -113,14 +122,22 @@ def build_lead_turn_prompt(
     return "\n\n".join(lines)
 
 
-def build_advisor_turn_prompt(task: str, lead_text: str, round_num: int) -> str:
-    return (
+def build_advisor_turn_prompt(
+    task: str, lead_text: str, round_num: int, acuerdos: Optional[List[str]] = None,
+) -> str:
+    base = (
         f"[Ronda {round_num}] [REVISIÓN]\n"
         f"Tarea: {task}\n"
         f"Última propuesta del líder:\n{lead_text}\n\n"
         "Audita con rigor y cierra con tu estado (CONFORME, DEBATIENDO, "
         "OBJECION_BLOQUEANTE, VETO_ARQUITECTONICO o PREGUNTA_AL_USUARIO)."
     )
+    if acuerdos:
+        base += (
+            "\n\nACUERDOS_PREVIOS (ya resueltos; no reabrir sin motivo nuevo):\n"
+            + "\n".join(f"- {a}" for a in acuerdos[-MAX_ACUERDOS:])
+        )
+    return base
 
 
 def run_lead_debate(
@@ -153,6 +170,7 @@ def run_lead_debate(
     result = DebateResult(task=task, mode=mode, writer=lead_label)
     questions_asked = 0
     pending_objections: List[str] = []
+    open_objections: Dict[str, str] = {}
     vetoed = False
 
     lead_system = build_lead_system_prompt(lead_label, advisor_labels, task, mode)
@@ -180,7 +198,7 @@ def run_lead_debate(
                 {"role": "system", "content": lead_system},
                 {"role": "user", "content": build_lead_turn_prompt(
                     task, context, result.transcript, round_num,
-                    pending_objections, vetoed)},
+                    pending_objections, vetoed, result.acuerdos)},
             ])
         except ProviderError as e:
             lead_text = f"Error de proveedor: {e}\n\nESTADO: DEBATIENDO"
@@ -196,7 +214,8 @@ def run_lead_debate(
             try:
                 text = advisor.chat([
                     {"role": "system", "content": advisor_systems[lab]},
-                    {"role": "user", "content": build_advisor_turn_prompt(task, lead_text, round_num)},
+                    {"role": "user", "content": build_advisor_turn_prompt(
+                        task, lead_text, round_num, result.acuerdos)},
                 ])
             except ProviderError as e:
                 text = f"Error de proveedor: {e}\n\nESTADO: DEBATIENDO"
@@ -207,6 +226,12 @@ def run_lead_debate(
                 estado = DEBATING
             if estado == OBJECTION:
                 pending_objections.append(f"{lab}: {text[:500]}")
+                open_objections[lab] = _short(text, 120)
+            elif estado == CONFORME and lab in open_objections:
+                record_acuerdo(
+                    result,
+                    f"{lab} objetó '{open_objections.pop(lab)}' → conforme en R{round_num} (resuelto, no reabrir).",
+                )
             advisor_estados.append(estado)
 
         result.rounds_used = round_num
@@ -217,6 +242,7 @@ def run_lead_debate(
                 "El líder debe replantear el diseño desde cero en la próxima ronda."
             )
             result.transcript.append(Turn(round=round_num, model=SYSTEM, text=note, estado=DEBATING))
+            record_acuerdo(result, f"R{round_num}: veto unánime; el líder replantea desde cero.")
             if verbose:
                 print(f"\n[{SYSTEM} -> mesa]\n{note}\n")
             if round_num >= max_rounds:
