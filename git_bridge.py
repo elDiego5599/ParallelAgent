@@ -66,6 +66,22 @@ def current_branch(path: Path) -> str:
     return _run_git(path, "rev-parse", "--abbrev-ref", "HEAD")
 
 
+def check_clean_working_tree(path: Path) -> None:
+    """Aborta si hay cambios sin commitear (incluye untracked por --porcelain).
+
+    Debe llamarse antes de cualquier `checkout -b`: con árbol sucio Git
+    arrastraría el WIP a la rama temporal y `git add -A` lo commitearía
+    en `consensus/...`, contaminando el diff y rompiendo la confianza.
+    """
+    status = _run_git(path, "status", "--porcelain")
+    if status.strip():
+        raise GitBridgeError(
+            "El árbol de trabajo tiene cambios sin commitear (dirty working tree).\n"
+            "Haz commit o stash de tus cambios antes de ejecutar 'build' "
+            "para evitar contaminar la rama consensus/..."
+        )
+
+
 def slugify_task(task: str, max_words: int = 5) -> str:
     words = re.sub(r"[^a-zA-Z0-9áéíóúñü ]", "", task.lower()).split()
     slug = "-".join(words[:max_words]) or "tarea"
@@ -99,7 +115,10 @@ def apply_consensus_to_branch(
     if not diff_str:
         raise GitBridgeError("Diff vacío: nada que aplicar.")
 
-    dirty = is_dirty(path)
+    # Primero, no hacer daño: abortar antes de cualquier checkout -b.
+    check_clean_working_tree(path)
+
+    dirty = False
     original = current_branch(path)
     branch = build_branch_name(task)
     created = False

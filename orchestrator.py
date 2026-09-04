@@ -327,7 +327,11 @@ def finish_build_output(
     context: str = "",
     repair_chat=None,
 ) -> int:
-    """Aplica el diff; ante fallo, da UNA oportunidad de auto-reparación al redactor."""
+    """Aplica el diff; ante fallo, da UNA oportunidad de auto-reparación al redactor.
+
+    Los abortos por árbol sucio son fatales: no se reintentan porque el
+    problema no es el diff sino el WIP del usuario.
+    """
     if not final_output:
         return 1
     try:
@@ -335,6 +339,9 @@ def finish_build_output(
         return 0
     except GitBridgeError as e:
         err_text = e.stderr or str(e)
+        if "sin commitear" in str(e).lower() or "sin commitear" in err_text.lower():
+            print(f"[ERROR GIT] {e}")
+            return 1
         if repair_chat is None:
             print(f"[ERROR GIT] {e}\nDiff emitido (no aplicado):")
             print(final_output)
